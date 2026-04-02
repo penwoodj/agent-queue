@@ -28,6 +28,19 @@
 
 This document provides a comprehensive, deduplicated specification of all queue and agentic queue-related requirements from both ChatGPT and OpenCode chat histories.
 
+### Related Documentation
+
+- **[chatgpt-requirements.md](./chatgpt-requirements.md)** - Original ChatGPT requirements table with 60 items (Q-001 to Q-060) covering the full breadth of queue system requirements, plus the narrow-scope table (QL-001 to QL-025) focused on meta-level queue operation and queue categories.
+- **[opencode-chat-history.md](./opencode-chat-history.md)** - Exhaustive catalog of every queue and agentic queue-related concept, requirement, and design pattern discussed across OpenCode chat history, including 27 comprehensive sections covering architecture, state machine, scheduling, priority systems, long-running behaviors, human gating, policy sliders, CLI commands, retry handling, resource management, concurrency, timeouts, checkpointing, sub-workflow coordination, validation, observability, loop variations, advanced queue patterns, scaling, security, determinism, agentic orchestration, implementation phases, and requirements traceability.
+
+### Source Documentation Hierarchy
+
+This file (`requirements.md`) serves as the unified specification that synthesizes requirements from multiple sources:
+
+1. **ChatGPT Requirements** (`chatgpt-requirements.md`) - Original 60-item requirements table
+2. **OpenCode Chat History** (`opencode-chat-history.md`) - Comprehensive design patterns and architectural decisions
+3. **Flow Diagrams** (`../diagrams/`) - 80+ Mermaid diagrams visualizing all queue patterns
+
 ---
 
 ## Queue System Architecture
