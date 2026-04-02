@@ -1,6 +1,6 @@
 # agent-queue
 
-Complex multi-dimensional queue workflow engine for `yaml-to-rust-agentsdk`.
+Complex multi-dimensional queue workflow engine for [`yaml-to-rust-agentsdk`](https://github.com/penwoodj/yaml-to-rust-agentsdk).
 
 ## Overview
 
