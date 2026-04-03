@@ -98,6 +98,7 @@ This file (`requirements.md`) serves as the unified specification that synthesiz
 | QL-023 | Spillover | If queue full, spill to alternate | Alternate ordering | SLA may degrade | No | Burst handling | `spillover: {to_queue, when}` | No silent drops |
 | QL-024 | Queue Paused | Temporarily ineligible | N/A | N/A | N/A | Ops | `pause: {scope, reason}` | Must not lease while paused |
 | QL-025 | Scheduled Catchup Policy | Defines behavior for missed schedule slots | N/A | N/A | N/A | Cron | `catchup: none|latest|all|bounded(n)` | Catchup is explicit and testable |
+| QL-026 | Hook-Triggered | Event-driven workflow execution; listens for events and triggers associated workflow | FIFO within hook-type, then priority | Configurable per hook (ASAP/Whenever/Deadline) | Optional | Webhooks, file watchers, git hooks, message queue events | `hook: {event_type, workflow_id, response_queue, config}` | Event-to-workflow binding is explicit; dedupe by event_id |
 
 ### Queue Categories Summary
 
@@ -418,6 +419,423 @@ flowchart TD
     D --> E[Resume queue]
     E --> F[Meta-scheduler includes queue again]
 ```
+
+---
+
+## Hook-Triggered Queue System (QL-026)
+
+### Hook System Architecture
+
+The Hook-Triggered queue category (QL-026) provides event-driven workflow execution where external events trigger predefined workflows. Hooks bridge external systems to the queue engine.
+
+### Hook Event Types
+
+| **Event Type** | **Source** | **Trigger Condition** | **Example Use** |
+|----------------|------------|----------------------|-----------------|
+| **Webhook** | HTTP POST/GET | External service callback | GitHub PR events, Slack interactions |
+| **File Watcher** | Filesystem inotify | File created/modified/deleted | Config changes, artifact arrival |
+| **Git Hook** | Git events | Commit/push/merge | CI triggers, auto-deployment |
+| **Message Queue** | NATS/Redis/Kafka | Message published | Microservice events |
+| **Timer** | Internal scheduler | Interval or one-time | Delayed processing |
+| **Manual** | CLI/API | Operator trigger | Debugging, forced runs |
+| **Email** | IMAP/SMTP | New email received | Ticket creation, processing |
+| **Database** | CDC/Trigger | Row change | Data sync, audit |
+
+### Hook Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant E as Event Source
+    participant H as Hook Registry
+    participant Q as Queue Engine
+    participant W as Workflow
+    
+    E->>H: Event arrives (webhook/file/message)
+    H->>H: Match event_type to registered hooks
+    H->>H: Dedupe by event_id
+    H->>H: Resolve workflow_id + config
+    H->>Q: Enqueue workflow run with response_queue
+    Q->>Q: Route to configured queue (ASAP/Whenever)
+    Q->>W: Lease + execute workflow
+    W-->>Q: Complete/Fail
+    Q-->>H: Callback to response_queue (if configured)
+    H-->>E: Ack/Nack event source
+```
+
+### Hook Configuration Schema
+
+```yaml
+hooks:
+  - id: hook-github-pr
+    event_type: webhook
+    match:
+      path: /hooks/github
+      method: POST
+      headers:
+        X-GitHub-Event: pull_request
+    workflow_id: pr-review-workflow
+    response_queue: github-responses
+    config:
+      response_queue: asap  # Route to ASAP queue
+      model_override: llama-3.2-3b
+      agent_pool: code-review
+      timeout: 300s
+      dedupe_window: 300s
+      retry_policy:
+        max: 3
+        backoff: exponential
+        
+  - id: hook-config-watcher
+    event_type: file_watcher
+    match:
+      path: ./config/*.yaml
+      events: [create, modify]
+    workflow_id: config-reload-workflow
+    response_queue: whenever
+    config:
+      response_queue: whenever  # Route to Whenever queue
+      debounce: 5s
+      batch_window: 10s
+```
+
+### Hook Deduplication
+
+| **Dedupe Key** | **Composition** | **Window** |
+|----------------|-----------------|------------|
+| **Webhook** | `hash(event_type + signature + ts_window)` | `dedupe_window` (default: 300s) |
+| **File Watcher** | `hash(file_path + event_type + inode)` | Until file stable |
+| **Git Hook** | `hash(commit_hash + repo + branch)` | Permanent (commit hash unique) |
+| **Message Queue** | `message_id` (from source) | `dedupe_window` |
+
+### Hook Response Queue Mapping
+
+Hooks can route triggered workflows to any queue category based on urgency:
+
+| **Response Queue** | **When to Use** | **Latency Expectation** |
+|--------------------|-----------------|------------------------|
+| `asap` | Security alerts, critical events | < 5s |
+| `asap-blocking` | Events blocking other work | < 10s |
+| `whenever` | Background processing | Minutes-hours |
+| `deadline-driven` | Events with SLAs | Before deadline |
+| `rate-limited` | External API callbacks | Within rate limit |
+
+---
+
+## Metasystem Prioritization Flow
+
+### Meta-Scheduler Architecture
+
+The meta-scheduler coordinates across all queue categories, deciding which queue to pull from next based on strategy configuration.
+
+### Meta-Scheduler Strategies
+
+```mermaid
+flowchart TD
+    A[Meta Tick] --> B{Strategy Type}
+    B -->|WRR| C[Weighted Round Robin]
+    B -->|DRR| D[Deficit Round Robin]
+    B -->|Priority+Aging| E[Priority with Aging]
+    B -->|EDF-Cross| F[Earliest Deadline First Cross-Queue]
+    
+    C --> G[Select queue per weight weights]
+    D --> H[Select queue with deficit balance]
+    E --> I[Select highest effective_priority]
+    F --> J[Select earliest deadline_ts]
+    
+    G --> K[Lease from selected queue]
+    H --> K
+    I --> K
+    J --> K
+    
+    K --> L[Execute task]
+    L --> M[Update metrics]
+    M --> N[Next tick]
+```
+
+### Strategy Configuration
+
+```yaml
+meta_scheduler:
+  strategy: priority_aging  # WRR, DRR, priority_aging, edf_cross
+  
+  # For WRR/DRR
+  weights:
+    asap: 10
+    deadline_driven: 5
+    scheduled: 3
+    whenever: 1
+    
+  # For Priority+Aging
+  aging_quantum: 300s
+  aging_rate: 1
+  max_age_boost: 5
+  
+  # Global fairness
+  min_share_per_queue: 1
+  max_starvation_time: 3600s
+  
+  # Cross-queue SLA awareness
+  sla_awareness:
+    escalate_overdue_deadlines: true
+    overdue_threshold: 0.8  # 80% of deadline elapsed
+```
+
+### ASAP Queue Behavior
+
+**Purpose**: Execute immediately when worker available, in strict priority order.
+
+```mermaid
+flowchart TD
+    A[Task enqueued to ASAP] --> B[Assign base_priority]
+    B --> C[Priority: Critical=10, High=5, Medium=3, Low=1]
+    C --> D[Insert into priority heap]
+    D --> E[Meta-scheduler sees ASAP has work]
+    E --> F[ASAP gets highest weight in strategy]
+    F --> G[Lease immediately if worker available]
+    G --> H[Execute with configured model/agent]
+```
+
+**ASAP Configuration**:
+
+```yaml
+queue_config:
+  asap:
+    max_depth: 1000
+    max_in_flight: 10
+    priority_weights:
+      critical: 10
+      high: 5
+      medium: 3
+      low: 1
+    aging_rate: 0  # No aging in ASAP - priority is fixed
+    model_override: null  # Use workflow default
+    agent_pool: default
+    preemption: true
+    backpressure: reject_new
+```
+
+**ASAP with Model/Agent Overrides**:
+
+```yaml
+# Per-task override when enqueuing to ASAP
+enqueue:
+  queue: asap
+  priority: critical
+  overrides:
+    model: llama-3.2-3b-instruct
+    agent_pool: gpu-workers
+    concurrency_limit: 1
+    timeout: 60s
+```
+
+### Whenever Queue Behavior
+
+**Purpose**: Execute when resources available, using idle capacity.
+
+```mermaid
+flowchart TD
+    A[Task enqueued to Whenever] --> B[Assign base_priority = 1]
+    B --> C[Insert into FIFO or aged queue]
+    C --> D[Meta-scheduler sees Whenever has work]
+    D --> E{Higher priority queues empty?}
+    E -->|no| F[Wait for idle capacity]
+    E -->|yes| G[Check resource pressure]
+    G --> H{Pressure < threshold?}
+    H -->|no| F
+    H -->|yes| I[Lease from Whenever]
+    I --> J[Execute with low-resource config]
+```
+
+**Whenever Spin-Up Logic**:
+
+| **Condition** | **Action** | **Configuration** |
+|---------------|------------|-------------------|
+| `asap_depth == 0 && cpu < 50%` | Spin up Whenever workers | `idle_threshold: 0.5` |
+| `asap_depth > 0` | Pause Whenever leasing | `pause_when_busy: true` |
+| `cpu > 80%` | Throttle Whenever | `throttle_factor: 0.5` |
+| `memory > 85%` | Pause new Whenever leases | `memory_threshold: 0.85` |
+
+**Whenever Configuration**:
+
+```yaml
+queue_config:
+  whenever:
+    max_depth: 10000
+    max_in_flight: 50  # Higher concurrency for background
+    priority_weights:
+      low: 1
+    aging_rate: 0.1  # Slight aging to prevent infinite wait
+    aging_quantum: 600s
+    idle_threshold: 0.5  # CPU < 50%
+    memory_threshold: 0.85
+    pause_when_busy: true
+    model_override: null  # Use smallest model
+    agent_pool: background-workers
+    batch_enabled: true
+    batch_window: 30s
+```
+
+**Whenever Auto-Scaling**:
+
+```yaml
+whenever_autoscaling:
+  min_workers: 0
+  max_workers: 10
+  scale_up:
+    trigger: queue_depth > 100 && cpu < 60%
+    increment: 2
+    cooldown: 60s
+  scale_down:
+    trigger: queue_depth < 10 || cpu > 80%
+    increment: -1
+    cooldown: 120s
+```
+
+### Cron Queue with Empty-System Retry
+
+**Purpose**: Recurring execution with automatic escalation when system is empty.
+
+**Empty-System Retry Logic**:
+
+```mermaid
+flowchart TD
+    A[Cron slot fires] --> B[Create run instance]
+    B --> C{Workers available?}
+    C -->|yes| D[Enqueue to scheduled queue]
+    C -->|no| E{Empty system retry count}
+    E -->|count < max| F[Increment retry count]
+    F --> G[Wait retry_delay]
+    G --> C
+    E -->|count >= max| H{Escalation policy}
+    H -->|asap| I[Promote to ASAP queue]
+    H -->|whenever| J[Demote to Whenever queue]
+    H -->|dlq| K[Send to DLQ with reason: no_workers]
+    I --> L[Audit: cron_escalation]
+    J --> L
+    K --> L
+```
+
+**Cron Configuration**:
+
+```yaml
+cron_config:
+  # Retry attempts when system has no workers
+  empty_system_retry:
+    max_attempts: 3
+    retry_delay: 60s
+    escalation_policy: asap  # asap, whenever, dlq
+    
+  # After max attempts, escalate to this queue
+  escalation:
+    policy: asap  # asap, whenever, dlq
+    priority: high
+    audit_reason: "cron_empty_system_escalation"
+    
+  # Catchup for missed slots
+  catchup:
+    policy: bounded  # none, latest, all, bounded(n)
+    max_catchup: 5
+    
+  # Timezone handling
+  timezone: "America/Chicago"
+  dst_handling: transition_safe
+```
+
+**Cron Empty-System Escalation Table**:
+
+| **Retry Attempt** | **Delay** | **Action** |
+|-------------------|-----------|------------|
+| 0 | 0s | Initial enqueue attempt |
+| 1 | 60s | First retry |
+| 2 | 120s | Second retry |
+| 3 | 180s | Third retry |
+| 4+ | N/A | Escalate to configured queue |
+
+---
+
+## Category Configuration Overrides
+
+### Per-Category Model Configuration
+
+Each queue category can override model selection:
+
+```yaml
+category_overrides:
+  asap:
+    model_selection:
+      strategy: smallest_fastest
+      preferred: ["llama-3.2-3b", "phi-3-mini"]
+      fallback: "qwen-2.5-7b"
+    agent_pool: default
+    timeout: 60s
+    
+  asap_blocking:
+    model_selection:
+      strategy: most_capable
+      preferred: ["llama-3.2-3b-instruct"]
+      fallback: "qwen-2.5-7b-instruct"
+    agent_pool: blocking-workers
+    timeout: 300s
+    max_concurrent: 1
+    
+  whenever:
+    model_selection:
+      strategy: smallest
+      preferred: ["phi-3-mini", "gemma-2b"]
+      fallback: "llama-3.2-3b"
+    agent_pool: background
+    timeout: 3600s  # 1 hour
+    max_concurrent: 10
+    
+  deadline_driven:
+    model_selection:
+      strategy: balanced
+      preferred: ["llama-3.2-3b"]
+      fallback: "qwen-2.5-7b"
+    agent_pool: default
+    timeout: deadline_ts - now  # Dynamic
+```
+
+### Manual Override Controls
+
+Operators can override any task's queue category:
+
+```yaml
+# CLI override example
+agent-queue override <task_id> \
+  --queue asap \
+  --priority critical \
+  --model llama-3.2-3b-instruct \
+  --reason "customer escalation" \
+  --audit-trail "TICKET-1234"
+```
+
+**Override Permissions** (RBAC):
+
+| **Override Type** | **Required Role** | **Audit Required** |
+|-------------------|-------------------|-------------------|
+| `queue_change` | `operator` | Yes |
+| `priority_boost` | `operator` | Yes |
+| `model_override` | `admin` | Yes |
+| `bypass_dependencies` | `admin` | Yes |
+| `force_run` | `admin` | Yes |
+
+### Category-Level Pause/Resume
+
+```yaml
+# CLI commands
+agent-queue pause --category whenever --reason "maintenance"
+agent-queue resume --category whenever
+agent-queue pause --scope system --reason "incident"
+agent-queue resume --scope system
+```
+
+**Pause Scope Hierarchy**:
+
+1. `system` - All queues paused
+2. `category` - All queues in category paused
+3. `queue` - Single queue paused
+4. `tenant` - All tenant queues paused
 
 ---
 

@@ -107,6 +107,7 @@ The following queue levels represent scheduling semantics unique to agent-queue:
 | QL-023 | Spillover | If queue full, spill to alternate | Overflow handling |
 | QL-024 | Queue Paused | Temporarily ineligible | Operational control |
 | QL-025 | Scheduled Catchup Policy | Behavior for missed schedule slots | Missed run handling |
+| QL-026 | Hook-Triggered | Event-driven workflow execution | Webhook, file watcher, git hook, message queue, timer, email, database trigger, manual, API - external event triggers predefined workflows with response queue routing |
 
 ### Queue Categories Summary
 
@@ -125,6 +126,126 @@ The following queue levels represent scheduling semantics unique to agent-queue:
 | **Security/Isolation** | QL-016, QL-017 | Sandbox, capability pinning |
 | **Cost/Optimization** | QL-018, QL-020 | Cost-aware, droppable experiments |
 | **Fairness** | QL-021, QL-022 | Meta-scheduler, starvation guard |
+| **Event-Driven** | QL-026 | Hook-triggered execution with external event sources |
+
+---
+
+## Hook-Triggered Queue Category (QL-026) - UNIQUE
+
+### Overview
+
+The Hook-Triggered queue category provides event-driven workflow execution where external events trigger predefined workflows. This bridges external systems (webhooks, file watchers, git hooks, message queues, timers, email, database triggers, manual triggers, APIs) to the queue engine.
+
+### Hook Event Types
+
+| **Event Type** | **Source** | **Trigger Condition** | **Example Use** |
+|----------------|------------|----------------------|-----------------|
+| **Webhook** | HTTP POST/GET | External service callback | GitHub PR events, Slack interactions |
+| **File Watcher** | Filesystem inotify | File created/modified/deleted | Config changes, artifact arrival |
+| **Git Hook** | Git events | Commit/push/merge | CI triggers, auto-deployment |
+| **Message Queue** | NATS/Redis/Kafka | Message published | Microservice events |
+| **Timer** | Internal scheduler | Interval or one-time | Delayed processing |
+| **Manual** | CLI/API | Operator trigger | Debugging, forced runs |
+| **Email** | IMAP/SMTP | New email received | Ticket creation, processing |
+| **Database** | CDC/Trigger | Row change | Data sync, audit |
+| **API** | REST endpoint | HTTP request | External system integration |
+
+### Hook Configuration Schema
+
+```yaml
+hooks:
+  - id: hook-github-pr
+    event_type: webhook
+    match:
+      path: /hooks/github
+      method: POST
+      headers:
+        X-GitHub-Event: pull_request
+    workflow_id: pr-review-workflow
+    response_queue: asap  # Route to ASAP queue
+    config:
+      model_override: llama-3.2-3b
+      agent_pool: code-review
+      timeout: 300s
+      dedupe_window: 300s
+      retry_policy:
+        max: 3
+        backoff: exponential
+        
+  - id: hook-config-watcher
+    event_type: file_watcher
+    match:
+      path: ./config/*.yaml
+      events: [create, modify]
+    workflow_id: config-reload-workflow
+    response_queue: whenever  # Route to Whenever queue
+    config:
+      debounce: 5s
+      batch_window: 10s
+```
+
+### Hook Lifecycle Flow
+
+```mermaid
+sequenceDiagram
+    participant E as Event Source
+    participant H as Hook Registry
+    participant Q as Queue Engine
+    participant W as Workflow
+    
+    E->>H: Event arrives (webhook/file/message)
+    H->>H: Match event_type to registered hooks
+    H->>H: Dedupe by event_id
+    H->>H: Resolve workflow_id + config
+    H->>Q: Enqueue workflow run with response_queue
+    Q->>Q: Route to configured queue (ASAP/Whenever)
+    Q->>W: Lease + execute workflow
+    W-->>Q: Complete/Fail
+    Q-->>H: Callback to response_queue (if configured)
+    H-->>E: Ack/Nack event source
+```
+
+### Hook Deduplication
+
+| **Dedupe Key** | **Composition** | **Window** |
+|----------------|-----------------|------------|
+| **Webhook** | `hash(event_type + signature + ts_window)` | `dedupe_window` (default: 300s) |
+| **File Watcher** | `hash(file_path + event_type + inode)` | Until file stable |
+| **Git Hook** | `hash(commit_hash + repo + branch)` | Permanent (commit hash unique) |
+| **Message Queue** | `message_id` (from source) | `dedupe_window` |
+
+### Hook Response Queue Mapping
+
+Hooks can route triggered workflows to any queue category based on urgency:
+
+| **Response Queue** | **When to Use** | **Latency Expectation** |
+|--------------------|-----------------|------------------------|
+| `asap` | Security alerts, critical events | < 5s |
+| `asap-blocking` | Events blocking other work | < 10s |
+| `whenever` | Background processing | Minutes-hours |
+| `deadline-driven` | Events with SLAs | Before deadline |
+| `rate-limited` | External API callbacks | Within rate limit |
+
+### Hook Retry Policy
+
+```yaml
+retry_policy:
+  max: 3
+  backoff: exponential  # linear, exponential, fixed
+  initial_delay: 1s
+  max_delay: 60s
+  jitter: 0.1
+  retry_on: [timeout, rate_limit, transient_error]
+  non_retryable: [validation_error, auth_error]
+```
+
+### Hook Acceptance Criteria
+
+- Hook events are deduplicated within `dedupe_window`
+- Failed hook dispatches follow retry policy with jitter
+- Hook-to-queue routing is configurable per hook
+- Hook events are audited with event_id, timestamp, source
+- Hook timeouts don't block the event bus
 
 ---
 
