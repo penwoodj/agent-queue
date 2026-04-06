@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan suite implements the Agent Queue System MVP with a **stubbed execution engine** that uses complex sleeping to simulate real LLM operations. This approach allows thorough verification of all queue engine requirements without needing the actual workflow execution engine.
+This plan suite implements the Agent Queue System MVP with a **transpiler integration** that uses delegates workflow execution to transpiler. This approach allows thorough verification of all queue engine requirements without needing the actual workflow execution engine.
 
 ## Assumptions
 
@@ -26,7 +26,7 @@ plans/mvp-implementation/
 ├── phases/
 │   ├── 01-foundation.md        # Phase 1: Entities, state, persistence
 │   ├── 02-queue-engine.md     # Phase 2: Scheduling, leases, retries
-│   ├── 03-agent-sdk-mock.md   # Phase 3: Stubbed agent executor
+│   ├── 03-transpiler-integration.md   # Phase 3: Transpler Integration
 │   ├── 04-cli-integration.md  # Phase 4: CLI + integration
 │   └── 05-testing-polish.md   # Phase 5: Testing + verification
 ├── tests/
