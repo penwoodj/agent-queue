@@ -5,6 +5,10 @@
 > **Project Focus**: Multi-dimensional queue workflow engine for scheduling, state management, and operational coordination.
 > 
 > **Related Project**: `yaml-to-local-rust-agentsdk` focuses on YAML-to-Rust transpilation, code generation, and LLM model execution. Requirements for transpilation, schema definition, AST parsing, code generation, and model lifecycle are documented there.
+>
+> **Integration Approach**: Agent Queue delegates workflow execution to `yaml-to-local-rust-agentsdk`. This document focuses exclusively on queue orchestration requirements. Workflow execution requirements (LLM providers, tools, prompts, etc.) are handled by transpiler.
+>
+> **See Also**: [Transpiler Integration Specification](../TRANSPILER_INTEGRATION_SPEC.md) for integration contract and protocol.
 
 ---
 
