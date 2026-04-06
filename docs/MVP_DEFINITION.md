@@ -89,15 +89,15 @@ If a feature depends on another P0 feature, it cascades into MVP.
 | ID | Feature | MVP Priority | Rationale |
 |----|---------|-------------|-----------|
 | QE-01 | **Entity definitions** (Workflow, Run, Task, Step, Agent, Queue, Lease) | P0 | Foundation — nothing works without entities |
-| QE-02 | **State machine** (queued → leased → running → done/failed/canceled/dlq) | P0 | Core lifecycle — every task follows this |
+| QE-02 | **State machine** (queued → leased → running → done/failed/canceled/dlq) | P0 | Core lifecycle — queue stays in RUNNING throughout transpiler execution |
 | QE-03 | **SQLite persistence** (WAL mode, ACID, single-writer) | P0 | Survives restarts — durability is non-negotiable |
 | QE-04 | **YAML validation** (strict parsing, clear errors, deny_unknown_fields) | P0 | Invalid YAML must fail fast with helpful message |
 | QE-05 | **3 queue categories** (ASAP, Whenever, Scheduled-Once) | P0 | Covers urgent, background, and timed work |
 | QE-06 | **Priority bands** (critical:10, high:5, normal:3, low:1) | P0 | Urgent tasks must run before background |
 | QE-07 | **FIFO tie-breaking** (enqueue_ts, task_id for same priority) | P0 | Deterministic ordering prevents starvation |
 | QE-08 | **Lease + heartbeat** (60s TTL, 15s heartbeat interval) | P0 | Prevents double-execution, detects crashes |
-| QE-09 | **Retry with backoff** (exponential, jitter, max 3, classifiable errors) | P0 | Transient failures must be handled automatically |
-| QE-10 | **Dead-letter queue** (exhausted retries → DLQ, triage, requeue) | P0 | Failed tasks must be inspectable and recoverable |
+| QE-09 | **Retry with backoff** (exponential, jitter, max 3, classifiable errors) | P0 | Queue-level retry only — entire workflow re-executed, no double retries |
+| QE-10 | **Dead-letter queue** (exhausted retries → DLQ, triage, requeue) | P0 | Failed tasks inspectable with transpiler error context |
 | QE-11 | **Idempotency key** (dedupe_window, same key = same effect) | P0 | Safe retries require idempotency guarantees |
 | QE-12 | **Cancellation** (run/task level, propagated to leased tasks) | P0 | Users must be able to stop work |
 | QE-13 | **Basic concurrency limits** (global max_in_flight) | P0 | Prevents system overload |
@@ -111,12 +111,12 @@ If a feature depends on another P0 feature, it cascades into MVP.
 | QE-21 | **Meta-scheduler** (priority-based queue selection across queues) | P0 | Multiple queues need coordinated scheduling |
 | QE-22 | **Queue routing** (route tasks to queue by YAML metadata) | P0 | Automatic queue assignment from workflow definition |
 | QE-23 | **Repeat-Cron** (cron expression, timezone, bounded catchup) | P0 | Most common use case for automation |
-| QE-24 | **Artifact storage** (file-based, per-step outputs, retention days) | P0 | Agent output must be persisted |
+| QE-24 | **Artifact metadata storage** (record transpiler output metadata, retention days) | P0 | Transpiler writes files, queue records metadata and manages retention |
 | QE-25 | **Audit log** (append-only, state transitions, who/what/when) | P0 | Compliance and debugging |
 | QE-26 | **Backpressure** (queue depth limit, reject when full) | P0 | Prevents unbounded memory growth |
 | QE-27 | **Due-time gate** (scheduled tasks not eligible before due_ts) | P0 | Time-based scheduling requires this |
 | QE-28 | **Admission control** (basic: accept/reject on enqueue) | P0 | System stability under load |
-| QE-29 | **Step-level error classification** (retryable vs non-retryable) | P0 | Retry logic depends on error classification |
+| QE-29 | **Transpiler error classification** (read error.retryable, decide retry/DLQ) | P0 | Queue reads transpiler's error classification, makes final decision |
 | QE-30 | **Schema version header** (schema_version in YAML) | P0 | Forward compatibility from day one |
 
 ### YAML-to-Rust-Agentsdk Integration (3 Features)
@@ -137,9 +137,17 @@ If a feature depends on another P0 feature, it cascades into MVP.
 | IN-02 | **Transpiler reports back** (completion/failure → state transition) | P0 | Queue must know when transpiler work is done |
 | IN-03 | **Lease extension via heartbeat** (queue heartbeats during transpiler execution) | P0 | Long-running transpiler tasks must keep their lease alive |
 | IN-04 | **Workflow input to transpiler** (queue provides workflow YAML path + params) | P0 | Queue must pass context to transpiler |
-| IN-05 | **Artifact handoff** (transpiler writes artifacts → queue stores them) | P0 | Results must flow back to queue |
+| IN-05 | **Artifact metadata recording** (transpiler writes files, queue records metadata) | P0 | Transpiler writes to disk, queue stores metadata in SQLite |
 | IN-06 | **Error propagation** (transpiler error → queue retry/DLQ decision) | P0 | Transpiler failures must trigger queue error handling |
 | IN-07 | **Single process architecture** (queue orchestrates transpiler in one Tokio runtime) | P0 | MVP simplicity — queue runs transpiler as subprocess or direct API |
+| IN-08 | **Schema compatibility** (adopt transpiler YAML schema for workflow definition) | P0 | Single source of truth for workflow format prevents incompatibility |
+| IN-09 | **Retry logic ownership** (queue owns retry, disable transpiler internal retry) | P0 | Prevents double retries — queue-level only |
+| IN-10 | **Tool system delegation** (delegate tool invocation to transpiler framework) | P0 | Avoids reimplementing rich tool framework |
+| IN-11 | **State synchronization** (queue owns orchestration state, transpiler owns execution state) | P0 | Clear separation prevents state conflicts |
+| IN-12 | **Artifact lifecycle** (transpiler writes, queue manages retention) | P0 | No file duplication, clear responsibility |
+| IN-13 | **Error classification protocol** (transpiler provides retryable flag, queue decides) | P0 | Enables intelligent retry/DLQ decisions |
+| IN-14 | **Observability integration** (consume transpiler logs, unified correlation IDs) | P0 | Complete observability without duplication |
+| IN-15 | **CLI integration mode** (CLI invocation MVP, library API post-MVP) | P0 | Clear integration contract with migration path |
 
 ---
 
@@ -723,17 +731,17 @@ agent-queue list --state running
 | **Backpressure** | QE-26 | 1 |
 | **Admission** | QE-28 | 1 |
 | **Transpiler Integration** | IN-EX-01, IN-EX-02, IN-EX-03 | 3 |
-| **Integration** | IN-01 through IN-07 | 7 |
-| **Total MVP** | | **40** |
+| **Integration** | IN-01 through IN-15 | 15 |
+| **Total MVP** | | **48** |
 
-### Requirements Coverage (142 total → 40 MVP)
+### Requirements Coverage (142 total → 48 MVP)
 
 | Priority | Requirements | In MVP | Coverage |
 |----------|-------------|--------|----------|
 | **P0** | 30 | 30 | 100% |
-| **P1** | 47 | 10 | 21% |
+| **P1** | 47 | 18 | 38% |
 | **P2** | 5 | 0 | 0% |
-| **Total** | 82 (OpenCode) | 40 | 49% |
+| **Total** | 82 (OpenCode) | 48 | 59% |
 
 ### Requirements Mapped to Full Spec
 
@@ -1390,7 +1398,7 @@ Exit codes:
 ## End of Document
 
 This MVP definition covers:
-- **40 features** (30 queue engine + 3 transpiler integration + 7 integration)
+- **48 features** (30 queue engine + 3 transpiler integration + 15 integration)
 - **177 hours** of implementation effort (~5 weeks)
 - **4 queue categories** (ASAP, Whenever, Scheduled-Once, Repeat-Cron)
 - **Execution delegated** to yaml-to-rust-agentsdk (separate project)

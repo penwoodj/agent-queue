@@ -61,6 +61,18 @@ This document maps every MVP requirement to its corresponding tests and verifica
 
 ## Test Coverage Matrix
 
+### Transpiler Integration Requirements (7)
+
+| ID | Requirement | Unit Test | Integration Test | E2E Test | Verification Criteria |
+|-----|-------------|------------|------------------|-------------|----------------------|
+| IN-08 | Schema compatibility | `test_schema_adopt` | `test_transpiler_schema` | `test_schema_e2e` | Queue validates queue config, transpiler validates workflow |
+| IN-09 | Retry logic ownership | `test_no_double_retry` | `test_single_retry_path` | `test_retry_ownership` | Exactly max_attempts total executions |
+| IN-10 | Tool system delegation | `test_no_tool_impl` | `test_transpiler_tools` | `test_tool_delegation` | No tools implemented in agent-queue |
+| IN-11 | State synchronization | `test_state_separation` | `test_running_state` | `test_state_sync_e2e` | No state conflict during execution |
+| IN-12 | Artifact lifecycle | `test_artifact_record` | `test_retention` | `test_artifact_lifecycle` | Metadata recorded, retention managed |
+| IN-13 | Error classification | `test_retryable_flag` | `test_dlq_decision` | `test_error_class_e2e` | Retryable→retry, non-retryable→DLQ |
+| IN-14 | Observability integration | `test_log_consumption` | `test_correlation_id` | `test_obs_integration` | Unified logs with trace_id |
+
 ### Coverage by Feature Area
 
 | Area | Total Requirements | Unit Tests | Integration Tests | E2E Tests | Coverage |
@@ -81,8 +93,9 @@ This document maps every MVP requirement to its corresponding tests and verifica
 | Backpressure | 1 | 1 | 1 | 1 | 100% |
 | Admission | 1 | 1 | 1 | 1 | 100% |
 | Transpiler Integration | 3 | 3 | 3 | 3 | 100% |
+| New Integration | 8 | 8 | 8 | 8 | 100% |
 | Integration | 7 | 7 | 7 | 7 | 100% |
-| **Total** | **40** | **40** | **40** | **40** | **100%** |
+| **Total** | **48** | **48** | **48** | **48** | **100%** |
 
 ## Verification Checklist
 

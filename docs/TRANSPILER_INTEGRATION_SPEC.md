@@ -846,6 +846,142 @@ Coordinate model selection and load balancing:
 
 ---
 
+## Integration Requirements (IN-08 through IN-15)
+
+These requirements address gaps identified in the transpiler integration analysis.
+
+### IN-08: Schema Compatibility
+
+**Requirement:** Agent Queue adopts transpiler's YAML schema for workflow definition. Queue validates queue-specific metadata (category, priority, schedule, retry) and passes the full workflow to transpiler for execution validation.
+
+**Implementation:**
+```toml
+# config/agent-queue.toml
+[transpiler]
+schema_version = "0.1.0"  # Must match transpiler's expected version
+```
+
+- Queue validates: `queue.category`, `queue.priority`, `schedule.cron`, `retry.*`, `env`
+- Transpiler validates: `steps.*`, `models.*`, `tools.*`, `agentic_workflow.*`
+- On enqueue: queue does lightweight validation, transpiler does full validation on execution
+
+**Verification:** Can enqueue a transpiler-format YAML workflow without errors.
+
+### IN-09: Retry Logic Ownership
+
+**Requirement:** Agent Queue owns all retry logic. Transpiler's internal retry is disabled (set to 0) to prevent double retries.
+
+**Implementation:**
+```rust
+// When spawning transpiler, disable internal retry
+cmd.arg("--retry-max-attempts")
+    .arg("0");  // Transpiler won't retry internally
+
+// Agent Queue handles all retries
+```
+
+**Rationale:** A workflow configured with max_attempts=3 means exactly 3 total executions, not 3 per step multiplied by 3 queue-level retries.
+
+**Verification:** Single workflow failure with max_attempts=3 results in exactly 3 transpiler executions.
+
+### IN-10: Tool System Delegation
+
+**Requirement:** All tool invocation is delegated to transpiler's framework. Agent Queue does not implement any tools.
+
+**Rationale:** Transpiler provides a richer toolset (file, web, shell, custom hooks, search). Reimplementing tools in agent-queue would duplicate effort and lose capabilities.
+
+**Verification:** Workflows can use all transpiler tools without agent-queue implementing them.
+
+### IN-11: State Synchronization Protocol
+
+**Requirement:** Clear state ownership — Agent Queue owns orchestration state (QUEUED → LEASED → RUNNING → DONE), Transpiler owns execution state (step progress, checkpoints). These are separate concerns.
+
+**Protocol:**
+- Agent Queue's `runs.state` is the authoritative orchestration state
+- Agent Queue stays in RUNNING throughout entire transpiler execution
+- Transpiler progress (step completion) is internal — not propagated to agent-queue
+- Transpler final result (completed/failed/timeout) triggers agent-queue state transition
+
+**Verification:** No state conflict between agent-queue and transpiler during execution.
+
+### IN-12: Artifact Lifecycle
+
+**Requirement:** Transpiler writes artifact files to disk. Agent Queue records artifact metadata in SQLite and manages retention/cleanup.
+
+**Protocol:**
+- Transpiler writes to `./artifacts/<run_id>/` (or configured location)
+- Agent Queue scans directory after completion, records metadata:
+  ```sql
+  INSERT INTO artifacts (run_id, step_id, path, size_bytes, created_at)
+  SELECT run_id, step_id, path, size_bytes, created_at FROM artifact_scan;
+  ```
+- Agent Queue manages retention policy (30 days default)
+- No file duplication — transpiler files are managed in-place
+
+**Verification:** Artifacts appear at expected path, metadata stored in SQLite.
+
+### IN-13: Error Classification Protocol
+
+**Requirement:** Transpiler provides `error.retryable` boolean in result JSON. Agent Queue reads this field and makes the final retry/DLQ decision.
+
+**Protocol:**
+```json
+{
+  "status": "failed",
+  "error": {
+    "error_type": "LlmTimeout",
+    "message": "Request timed out after 60s",
+    "step_id": "step-2",
+    "retryable": true
+  }
+}
+```
+
+- If `error.retryable == true` → Agent Queue retries with backoff
+- If `error.retryable == false` → Agent Queue sends to DLQ
+- If `error.retryable` is absent → Assume non-retryable → DLQ
+
+**Verification:** Retryable transpiler errors trigger queue-level retry. Non-retryable errors go to DLQ.
+
+### IN-14: Observability Integration
+
+**Requirement:** Agent Queue consumes transpiler's log output and adds unified correlation IDs. Both log streams are visible in agent-queue's structured logs.
+
+**Implementation:**
+- Transpiler logs to stdout/stderr (JSON format)
+- Agent Queue captures transpiler output via subprocess pipes
+- Agent Queue prepends its `trace_id` and `run_id` to each transpiler log line
+- Combined log output provides complete lifecycle: queue orchestration + workflow execution
+
+**Verification:** Single log stream contains both queue events and execution events, correlated by trace_id.
+
+### IN-15: CLI Integration Mode
+
+**Requirement:** MVP uses CLI invocation (subprocess). Post-MVP supports library API for direct integration.
+
+**MVP (CLI):**
+```rust
+Command::new("yaml-to-rust-agentsdk")
+    .arg("execute")
+    .arg("--workflow")
+    .arg(workflow_path)
+    .arg("--format")
+    .arg("json")
+```
+
+**Post-MVP (Library):**
+```rust
+use yaml_to_rust_agentsdk::Engine;
+let engine = Engine::new(&config)?;
+let result = engine.execute(&workflow).await?;
+```
+
+**Migration path:** Trait-based abstraction allows switching without changing queue logic.
+
+**Verification:** Can switch between CLI and library integration without modifying queue engine.
+
+---
+
 ## Appendix A: Error Reference
 
 ### Transpiler Error Types

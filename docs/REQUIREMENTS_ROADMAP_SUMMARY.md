@@ -268,11 +268,12 @@ agent-queue/
     - Story 3 (Batch): Multi-tenancy, fairness, quotas, work stealing, backpressure
 
 2. **Requirements Traceability**:
-    - Agent Queue focuses on queue orchestration (30 P0 requirements)
+    - Agent Queue focuses on queue orchestration (30 P0 queue requirements)
     - Workflow execution delegated to transpiler (no Q requirements for execution)
+    - 15 integration requirements (IN-01 through IN-15) define transpiler coupling
     - Priority queues (Q-012), leases (Q-005), time (Q-011) most used
     - Observability (Q-020, Q-021, Q-022, Q-023) critical for all
-    - **Key Delegations**: Checkpointing (Q-039), input hashing (Q-042), execution logic
+    - **Delegated**: Checkpointing (Q-039), input hashing (Q-042), execution logic (Q-058), multi-model (Q-059)
 
 3. **Roadmap Phases Are Sequential**:
     - Each phase depends on previous phase

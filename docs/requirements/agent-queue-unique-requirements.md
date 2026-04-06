@@ -45,6 +45,23 @@
 | **Build Orchestration** | Reproducible builds | Build system concern |
 | **Minification** | Token optimization for LLMs | LLM efficiency |
 | **Local Model Execution** | Local-first LLM inference | Model layer |
+| **Step Execution** | Sequential/parallel/hybrid step execution | Execution engine |
+| **Tool Invocation** | file, web, shell, custom hooks | Tool framework |
+| **Prompt Rendering** | Variable substitution, system/user/assistant | Execution engine |
+| **Output Parsing** | Structured extraction from LLM responses | Execution engine |
+| **Validation Loops** | Convergence with multiple strategies | Execution engine |
+| **Checkpointing** | State snapshots and resume | Execution engine |
+| **Code Generation** | Compiled Rust executables from YAML | Transpiler core |
+| **Metrics Collection** | Performance, quality, convergence metrics | Execution engine |
+
+### Post-MVP Requirements Delegated to Transpiler
+
+| Requirement ID | Domain | Status | Reason |
+|---------------|--------|--------|--------|
+| **QL-039** | Checkpointing | **DELEGATED** | Transpiler handles execution state snapshots and resume |
+| **QL-042** | Input Hashing | **DELEGATED** | Transpiler handles caching/dedupe optimization |
+| **QL-058** | Parallel Step Execution | **DELEGATED** | Transpiler handles parallel/serial/hybrid execution modes |
+| **QL-059** | Multiple LLM Providers | **DELEGATED** | Transpiler handles multi-model auto-routing |
 
 ### What `agent-queue` Adds Uniquely (THIS document)
 
