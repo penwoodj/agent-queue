@@ -119,40 +119,27 @@ If a feature depends on another P0 feature, it cascades into MVP.
 | QE-29 | **Step-level error classification** (retryable vs non-retryable) | P0 | Retry logic depends on error classification |
 | QE-30 | **Schema version header** (schema_version in YAML) | P0 | Forward compatibility from day one |
 
-### YAML-to-Rust-Agentsdk MVP (18 Features)
+### YAML-to-Rust-Agentsdk Integration (3 Features)
+
+**NOTE:** Agent Queue delegates workflow execution to `yaml-to-rust-agentsdk`. The following are integration requirements only. All actual execution (steps, tools, LLM calls, parsing, etc.) is handled by the transpiler.
 
 | ID | Feature | MVP Priority | Rationale |
 |----|---------|-------------|-----------|
-| YA-01 | **YAML schema for workflows** (steps, tools, prompts, outputs, model config) | P0 | The input format — without this, nothing runs |
-| YA-02 | **Workflow IR** (typed intermediate representation from parsed YAML) | P0 | Internal representation for execution engine |
-| YA-03 | **Single LLM provider** (llama.cpp via llama-cpp-2) | P0 | One provider that works is enough for MVP |
-| YA-04 | **LLM provider trait** (trait LlmProvider with generate(), stream()) | P0 | Abstraction allows future providers without rewrite |
-| YA-05 | **Step execution engine** (sequential, input/output passing) | P0 | Core execution — steps must run in order |
-| YA-06 | **Tool invocation framework** (built-in: shell, file_read, file_write) | P0 | Agents need tools to be useful |
-| YA-07 | **Tool permission model** (allowlist per workflow, default: deny) | P0 | Safety — uncontrolled tool access is dangerous |
-| YA-08 | **Prompt template rendering** (variable substitution, system/user/assistant) | P0 | LLM interactions need structured prompts |
-| YA-09 | **Step timeout** (configurable per-step, default 120s) | P0 | Prevents hung workflows |
-| YA-10 | **Step retry** (per-step retry with configurable max) | P0 | Individual step failures shouldn't kill entire workflow |
-| YA-11 | **Context window management** (token counting, truncation strategy) | P0 | Local models have limited context — must manage it |
-| YA-12 | **Output parsing** (structured extraction from LLM responses) | P0 | Raw LLM output must be structured for step chaining |
-| YA-13 | **Workflow configuration** (model selection, temperature, max_tokens) | P0 | Users need to control LLM behavior |
-| YA-14 | **Environment variables** (secrets via env vars, not inline) | P0 | API keys and secrets must not be in YAML |
-| YA-15 | **Error handling per step** (continue vs abort on error) | P0 | Workflow resilience |
-| YA-16 | **Artifact collection** (gather step outputs into run artifacts) | P0 | Users need access to results |
-| YA-17 | **Basic metrics** (step count, total duration, token usage) | P0 | Users need to understand cost and performance |
-| YA-18 | **Deterministic validation mode** (dry-run, no LLM calls) | P0 | Validate YAML without spending compute |
+| IN-EX-01 | **LLM provider abstraction trait** (trait LlmProvider for future integration) | P0 | Abstraction allows future providers, MVP delegates to transpiler |
+| IN-EX-02 | **Environment variable passthrough** (queue passes env vars to transpiler) | P0 | API keys and secrets must not be in YAML, queue orchestrates this |
+| IN-EX-03 | **Deterministic validation mode** (dry-run without transpiler execution) | P0 | Validate YAML schema and queue config without spending compute |
 
-### Integration MVP (7 Features)
+### Transpiler Integration MVP (7 Features)
 
 | ID | Feature | MVP Priority | Rationale |
 |----|---------|-------------|-----------|
-| IN-01 | **Queue dispatches to agent** (queue engine calls agentsdk executor) | P0 | The bridge — queue must trigger execution |
-| IN-02 | **Agent reports back** (completion/failure → state transition) | P0 | Queue must know when work is done |
-| IN-03 | **Lease extension via heartbeat** (agent heartbeats during execution) | P0 | Long-running agent tasks must keep their lease alive |
-| IN-04 | **Workflow input from queue** (queue provides workflow YAML path + params) | P0 | Queue must pass context to agent |
-| IN-05 | **Artifact handoff** (agent writes artifacts → queue stores them) | P0 | Results must flow back to queue |
-| IN-06 | **Error propagation** (agent error → queue retry/DLQ decision) | P0 | Agent failures must trigger queue error handling |
-| IN-07 | **Single process architecture** (queue + agent in one Tokio runtime) | P0 | MVP simplicity — no inter-process communication |
+| IN-01 | **Queue dispatches to transpiler** (queue engine calls transpiler CLI) | P0 | The bridge — queue must trigger execution via transpiler |
+| IN-02 | **Transpiler reports back** (completion/failure → state transition) | P0 | Queue must know when transpiler work is done |
+| IN-03 | **Lease extension via heartbeat** (queue heartbeats during transpiler execution) | P0 | Long-running transpiler tasks must keep their lease alive |
+| IN-04 | **Workflow input to transpiler** (queue provides workflow YAML path + params) | P0 | Queue must pass context to transpiler |
+| IN-05 | **Artifact handoff** (transpiler writes artifacts → queue stores them) | P0 | Results must flow back to queue |
+| IN-06 | **Error propagation** (transpiler error → queue retry/DLQ decision) | P0 | Transpiler failures must trigger queue error handling |
+| IN-07 | **Single process architecture** (queue orchestrates transpiler in one Tokio runtime) | P0 | MVP simplicity — queue runs transpiler as subprocess or direct API |
 
 ---
 
@@ -165,15 +152,18 @@ If a feature depends on another P0 feature, it cascades into MVP.
 │                    agent-queue (single process)          │
 │                                                         │
 │  ┌──────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │   CLI    │───▶│ Queue Engine  │───▶│  Agent SDK    │  │
-│  │  (Clap)  │◀───│  (Scheduler)  │◀───│ (Executor)    │  │
+│  │   CLI    │───▶│ Queue Engine  │───▶│  Transpiler   │  │
+│  │  (Clap)  │◀───│  (Scheduler)  │◀───│  Integration │  │
 │  └──────────┘    └──────┬───────┘    └───────┬───────┘  │
 │                         │                    │           │
-│                    ┌────▼────┐         ┌─────▼─────┐    │
-│                    │ SQLite  │         │ llama.cpp │    │
-│                    │  (WAL)  │         │ (llama-   │    │
-│                    │         │         │  cpp-2)   │    │
-│                    └─────────┘         └───────────┘    │
+│                    ┌────▼────┐                     │       │
+│                    │ SQLite  │                     ▼       │
+│                    │  (WAL)  │              ┌──────────────┐  │
+│                    │         │              │ yaml-to-    │  │
+│                    └─────────┘              │ local-rust-  │  │
+│                                        │ agentsdk     │  │
+│                                        │ (External)   │  │
+│                                        └──────────────┘  │
 │                                                         │
 │  ┌──────────┐    ┌──────────────┐    ┌───────────────┐  │
 │  │  Logs    │    │  Artifacts   │    │  Audit Trail  │  │
@@ -189,9 +179,9 @@ If a feature depends on another P0 feature, it cascades into MVP.
 | **CLI** | User interface: enqueue, list, inspect, cancel, retry, drain | Clap 4.x + console |
 | **Queue Engine** | Scheduling, state management, lease management, routing | Custom (Tokio) |
 | **Scheduler** | Meta-scheduling across queues, priority ordering, time gates | Custom (Tokio) |
-| **Agent SDK** | YAML parsing, step execution, LLM calls, tool invocation | Custom (serde) |
-| **LLM Provider** | Model loading, inference, streaming | llama-cpp-2 |
-| **Storage** | Persistent state for all entities | SQLite (rusqlite, WAL) |
+| **Transpiler Integration** | Workflow dispatch to transpiler, result collection, error handling | CLI or API call |
+| **yaml-to-rust-agentsdk** | YAML parsing, step execution, LLM calls, tool invocation | External (separate repo) |
+| **Storage** | Persistent state for queue entities | SQLite (rusqlite, WAL) |
 | **Logger** | Structured JSON logging with correlation IDs | tracing + tracing-subscriber |
 | **Artifact Store** | File-based output storage | std::fs |
 | **Audit Log** | Append-only state change records | SQLite table |
@@ -329,20 +319,15 @@ Attempt 3: 4000ms ± 800ms
 
 ---
 
-## YAML-to-Rust-Agentsdk MVP
+## Transpiler Integration (Delegated Execution)
 
-### MVP YAML Schema
+### Workflow YAML (Minimal for MVP)
+
+Agent Queue validates and manages queue-specific metadata. The actual workflow steps, prompts, tools, and LLM configuration are defined per transpiler schema.
 
 ```yaml
-# schema_version is REQUIRED — enables future migrations
-schema_version: "0.1.0"
-
-# Workflow identity
-name: my-workflow
-description: "Does something useful with an LLM agent"
-version: "1.0.0"
-
-# Queue configuration (routes to agent-queue)
+# Queue configuration (agent-queue responsibility)
+schema_version: "0.1.0"  # Required by agent-queue
 queue:
   category: whenever          # asap | whenever | scheduled | cron
   priority: normal            # critical | high | normal | low
@@ -353,70 +338,40 @@ queue:
     catchup: bounded(5)
   due_ts: "2025-04-03T02:00:00-05:00"  # For scheduled category
 
-# Retry policy (overrides defaults)
+# Retry policy (agent-queue responsibility)
 retry:
   max_attempts: 3
   base_delay_ms: 1000
   max_delay_ms: 30000
 
-# LLM configuration
-model:
-  provider: llama-cpp          # Only provider for MVP
-  model_path: ./models/llama-3.2-3b-q4_k_m.gguf
-  temperature: 0.7
-  max_tokens: 4096
-  context_budget: 4096         # Tokens reserved for this workflow
-
-# Tool permissions (default: deny unless listed)
-tools:
-  allowed:
-    - shell                   # Execute shell commands
-    - file_read               # Read files
-    - file_write              # Write files
-  blocked:
-    - network                 # No network access in MVP
-
-# Environment (secrets via env vars, never inline)
+# Environment variables (agent-queue passthrough to transpiler)
 env:
   - API_KEY                   # Resolved from process environment
 
-# Steps (executed sequentially in MVP)
-steps:
-  - id: analyze-input
-    description: "Analyze the input file"
-    prompt:
-      system: "You are a code analyst. Be concise."
-      user: "Analyze this file and identify issues:\n{{input_file}}"
-    model:
-      temperature: 0.3         # Override per-step
-    timeout_s: 120
-    retry:
-      max_attempts: 2
-    on_error: abort            # abort | continue | retry
-
-  - id: generate-fix
-    description: "Generate fix for identified issues"
-    prompt:
-      system: "You are a senior developer."
-      user: |
-        Based on this analysis:
-        {{steps.analyze-input.output}}
-        
-        Generate a fix for the identified issues in:
-        {{input_file}}
-    tools:
-      - file_read
-      - file_write
-    timeout_s: 300
-
-  - id: validate-fix
-    description: "Validate the generated fix"
-    prompt:
-      user: |
-        Validate this fix compiles and passes tests:
-        {{steps.generate-fix.output}}
-    on_error: continue         # Don't abort on validation failure
+# Workflow configuration (transpiler responsibility - see transpiler docs)
+# The following sections are defined and validated by yaml-to-rust-agentsdk:
+# - model: provider, model_path, temperature, max_tokens
+# - tools: allowed/blocked tools
+# - steps: workflow steps with prompts, tools, timeouts
 ```
+
+### Transpiler Capabilities (Delegated)
+
+The following capabilities are fully handled by `yaml-to-rust-agentsdk`:
+
+| Capability | Transpiler Status | Agent Queue Role |
+|------------|------------------|------------------|
+| **YAML schema parsing** | ✅ Full support | Validates schema_version only |
+| **Multi-model support** | ✅ LM Studio, Ollama, llama.cpp, Jina AI | Passes env vars for model selection |
+| **Step execution** | ✅ Sequential, parallel, hybrid | Waits for completion |
+| **Tool framework** | ✅ file, web, shell + custom hooks | Stores artifacts post-execution |
+| **Prompt rendering** | ✅ Variable substitution, system/user/assistant | N/A (transpiler) |
+| **Context management** | ✅ Token counting, truncation strategies | N/A (transpiler) |
+| **Output parsing** | ✅ Structured extraction from LLM responses | N/A (transpiler) |
+| **Metrics collection** | ✅ Performance, quality, convergence metrics | Stores in audit log |
+| **Validation mode** | ✅ Dry-run without LLM calls | Calls transpiler validate |
+| **Checkpointing** | ✅ State snapshots and resume | N/A (transpiler) |
+| **Code generation** | ✅ Compiled Rust executables from YAML | N/A (transpiler) |
 
 ### MVP Tool Framework
 
@@ -496,28 +451,29 @@ Context Budget Allocation (per step):
 ### Execution Flow
 
 ```
-┌─────┐    ┌───────────┐    ┌──────────┐    ┌──────────┐    ┌──────┐
-│ CLI │───▶│  Queue    │───▶│ Scheduler│───▶│  Agent   │───▶│ LLM  │
-│     │    │  Engine   │    │  Tick    │    │ Executor │    │      │
-└─────┘    └───────────┘    └──────────┘    └────┬─────┘    └──┬───┘
-     ▲                                              │             │
-     │                                              ▼             ▼
-     │                                        ┌──────────┐  ┌──────────┐
-     │                                        │  Tools   │  │ Artifacts│
-     │                                        │(shell,   │  │ (files)  │
-     │                                        │ fs r/w)  │  │          │
-     │                                        └──────────┘  └──────────┘
-     │
-     │  ┌─────────────────────────────────────────┐
-     └──│  State Machine Transitions (SQLite)      │
-        │  QUEUED → LEASED → RUNNING → DONE/FAILED │
-        │  FAILED → RETRY → DLQ                    │
-        └─────────────────────────────────────────┘
+┌─────┐    ┌───────────┐    ┌──────────┐    ┌──────────────┐    ┌───────────┐
+│ CLI │───▶│  Queue    │───▶│ Scheduler│───▶│ Transpiler   │───▶│  LLM      │
+│     │    │  Engine   │    │  Tick    │    │  Integration │    │ (via      │
+└─────┘    └───────────┘    └──────────┘    └──────┬───────┘    │ transpiler)│
+      ▲                                               │            └───────────┘
+      │                                               │
+      │                                               ▼
+      │                                        ┌──────────────┐
+      │                                        │ Artifacts    │
+      │                                        │ (transpiler   │
+      │                                        │  output)     │
+      │                                        └──────┬───────┘
+      │                                               │
+      │  ┌─────────────────────────────────────────┐        │
+      └──│  State Machine Transitions (SQLite)      │◀───────┘
+         │  QUEUED → LEASED → RUNNING → DONE/FAILED │
+         │  FAILED → RETRY → DLQ                    │
+         └─────────────────────────────────────────┘
 ```
 
-### Single Process Integration
+### Transpiler Integration
 
-The MVP runs everything in one Tokio current-thread runtime:
+The MVP integrates with transpiler via CLI or API call:
 
 ```rust
 #[tokio::main(flavor = "current_thread")]
@@ -525,8 +481,7 @@ async fn main() -> Result<()> {
     // Initialize components
     let db = SqliteStore::open("agent-queue.db")?;
     let queue_engine = QueueEngine::new(db.clone(), config.queue);
-    let llm_provider = LlamaCppProvider::new(&config.model)?;
-    let agent_executor = AgentExecutor::new(llm_provider, config.agent);
+    let transpiler = TranspilerIntegration::new(&config.transpiler);
     let cli = Cli::parse();
     
     // Run scheduler loop
@@ -539,8 +494,13 @@ async fn main() -> Result<()> {
             println!("Enqueued task: {}", task.id);
         }
         Run => {
-            // Start the agent execution loop
-            agent_executor.run(queue_engine.clone()).await?;
+            // Start queue engine loop (dispatches to transpiler)
+            queue_engine.run(transpiler.clone()).await?;
+        }
+        Validate { workflow } => {
+            // Validate via transpiler's validation mode
+            transpiler.validate(workflow)?;
+            println!("Workflow is valid");
         }
         // ... other commands
     }
@@ -550,17 +510,17 @@ async fn main() -> Result<()> {
 }
 ```
 
-### Heartbeat During Execution
+### Heartbeat During Transpiler Execution
 
-When the agent is executing a long-running LLM call or tool invocation, it must keep its lease alive:
+When transpiler is executing a workflow (may take minutes), queue must keep its lease alive:
 
 ```rust
-async fn execute_step_with_heartbeat(
+async fn execute_workflow_with_heartbeat(
     &self,
     task: &mut Task,
-    step: &Step,
+    workflow: &Workflow,
     heartbeat_tx: mpsc::Sender<Heartbeat>,
-) -> Result<StepOutput> {
+) -> Result<TranspilerResult> {
     // Spawn heartbeat task
     let task_id = task.id.clone();
     let heartbeat_handle = tokio::spawn(async move {
@@ -571,8 +531,8 @@ async fn execute_step_with_heartbeat(
         }
     });
     
-    // Execute the step (may take minutes for LLM calls)
-    let result = self.execute_step(step).await;
+    // Execute workflow via transpiler (may take minutes)
+    let result = self.transpiler.execute(workflow).await;
     
     // Stop heartbeat
     heartbeat_handle.abort();
@@ -628,7 +588,7 @@ agent-queue inspect TASK-001
 # → Artifacts: ./artifacts/TASK-001/review/output.md
 ```
 
-**Requirements exercised:** QE-01, QE-02, QE-04, QE-05, QE-06, QE-07, QE-08, QE-14, QE-15, QE-16, QE-17, IN-01, IN-02, IN-04, YA-01, YA-03, YA-05, YA-06, YA-08, YA-09, YA-11, YA-12, YA-13, YA-16, YA-17
+**Requirements exercised:** QE-01, QE-02, QE-04, QE-05, QE-06, QE-07, QE-08, QE-14, QE-15, QE-16, QE-17, IN-01, IN-02, IN-04, IN-EX-02, IN-EX-03
 
 ### Story 2: "I want to schedule a recurring workflow"
 
@@ -677,7 +637,7 @@ agent-queue list --queue cron --state done --limit 5
 # → CRON-001  DONE  cron  nightly-report  completed 2d ago
 ```
 
-**Requirements exercised:** QE-01, QE-02, QE-03, QE-04, QE-08, QE-09, QE-10, QE-11, QE-14, QE-15, QE-16, QE-17, QE-21, QE-22, QE-23, QE-24, QE-25, QE-27, QE-29, QE-30, IN-01, IN-02, IN-04, IN-05, YA-01, YA-03, YA-05, YA-06, YA-08, YA-10, YA-11, YA-13, YA-15, YA-16, YA-17
+**Requirements exercised:** QE-01, QE-02, QE-03, QE-04, QE-08, QE-09, QE-10, QE-11, QE-14, QE-15, QE-16, QE-17, QE-21, QE-22, QE-23, QE-24, QE-25, QE-27, QE-29, QE-30, IN-01, IN-02, IN-04, IN-05, IN-EX-02
 
 ### Story 3: "I want to recover from a failure"
 
@@ -710,7 +670,7 @@ agent-queue inspect TASK-043  # New task ID from requeue
 # → Attempts: 0/3
 ```
 
-**Requirements exercised:** QE-02, QE-08, QE-09, QE-10, QE-11, QE-14, QE-16, QE-17, QE-19, QE-25, QE-26, QE-29, IN-01, IN-02, IN-03, IN-06, YA-05, YA-09, YA-11, YA-17
+**Requirements exercised:** QE-02, QE-08, QE-09, QE-10, QE-11, QE-14, QE-16, QE-17, QE-19, QE-25, QE-26, QE-29, IN-01, IN-02, IN-03, IN-06, IN-EX-03
 
 ### Story 4: "I want to run multiple workflows and prioritize"
 
@@ -762,28 +722,18 @@ agent-queue list --state running
 | **Artifacts** | QE-24 | 1 |
 | **Backpressure** | QE-26 | 1 |
 | **Admission** | QE-28 | 1 |
-| **YAML Schema** | YA-01 | 1 |
-| **Workflow IR** | YA-02 | 1 |
-| **LLM Provider** | YA-03, YA-04 | 2 |
-| **Execution Engine** | YA-05, YA-10, YA-15 | 3 |
-| **Tools** | YA-06, YA-07 | 2 |
-| **Prompts** | YA-08, YA-13 | 2 |
-| **Timeouts** | YA-09 | 1 |
-| **Context** | YA-11 | 1 |
-| **Output** | YA-12 | 1 |
-| **Secrets** | YA-14 | 1 |
-| **Validation Mode** | YA-18 | 1 |
+| **Transpiler Integration** | IN-EX-01, IN-EX-02, IN-EX-03 | 3 |
 | **Integration** | IN-01 through IN-07 | 7 |
-| **Total MVP** | | **55** |
+| **Total MVP** | | **40** |
 
-### Requirements Coverage (142 total → 55 MVP)
+### Requirements Coverage (142 total → 40 MVP)
 
 | Priority | Requirements | In MVP | Coverage |
 |----------|-------------|--------|----------|
 | **P0** | 30 | 30 | 100% |
-| **P1** | 47 | 25 | 53% |
+| **P1** | 47 | 10 | 21% |
 | **P2** | 5 | 0 | 0% |
-| **Total** | 82 (OpenCode) | 55 | 67% |
+| **Total** | 82 (OpenCode) | 40 | 49% |
 
 ### Requirements Mapped to Full Spec
 
@@ -816,14 +766,15 @@ agent-queue list --state running
 | Admission control | (subset of Q-007) |
 | Error classification | (subset of Q-008) |
 | Schema version | Q-026 |
-| Workflow YAML | Q-057 |
-| LLM provider | Q-058 |
-| Tool framework | Q-016 |
-| Secret env vars | Q-017 |
-| Context management | Q-058 |
-| Retry per step | Q-008 |
-| Deterministic validation | Q-028 |
-| Metrics | Q-021 (basic) |
+| **DELEGATED** | **Transpiler Requirement** |
+| Workflow YAML execution | (DELEGATED to transpiler) |
+| LLM provider integration | (DELEGATED to transpiler) |
+| Tool framework | (DELEGATED to transpiler) |
+| Secret env vars passthrough | Q-017 (queue → transpiler) |
+| Context management | (DELEGATED to transpiler) |
+| Step execution | (DELEGATED to transpiler) |
+| Deterministic validation | Q-028 (via transpiler validate) |
+| Metrics collection | Q-021 (DELEGATED to transpler) |
 
 ---
 
@@ -897,7 +848,8 @@ agent-queue/
 │   │   ├── cancel.rs              # cancel command
 │   │   ├── retry.rs               # retry command
 │   │   ├── schedule.rs            # schedule command
-│   │   └── drain.rs               # drain command
+│   │   ├── drain.rs               # drain command
+│   │   └── validate.rs            # validate command
 │   ├── queue/
 │   │   ├── mod.rs
 │   │   ├── engine.rs              # Queue engine core
@@ -912,28 +864,15 @@ agent-queue/
 │   │   ├── machine.rs             # State machine definition
 │   │   ├── transitions.rs         # Valid transition table
 │   │   └── store.rs               # SQLite state store
-│   ├── agent/
+│   ├── transpiler/
 │   │   ├── mod.rs
-│   │   ├── executor.rs            # Agent executor
-│   │   ├── step_runner.rs         # Step execution loop
-│   │   ├── heartbeat.rs           # Heartbeat management
-│   │   └── context.rs             # Context window management
-│   ├── model/
-│   │   ├── mod.rs
-│   │   ├── provider.rs            # LlmProvider trait
-│   │   ├── llama_cpp.rs           # llama-cpp-2 implementation
-│   │   └── token.rs               # Token counting
-│   ├── tools/
-│   │   ├── mod.rs
-│   │   ├── registry.rs            # Tool registry
-│   │   ├── shell.rs               # Shell tool
-│   │   ├── file_read.rs           # File read tool
-│   │   └── file_write.rs          # File write tool
+│   │   ├── integration.rs         # Transpiler integration (CLI/API)
+│   │   ├── heartbeat.rs           # Heartbeat during transpiler execution
+│   │   └── result.rs              # Result parsing from transpiler
 │   ├── workflow/
 │   │   ├── mod.rs
-│   │   ├── schema.rs              # YAML schema structs
-│   │   ├── parser.rs              # YAML parser + validation
-│   │   └── ir.rs                  # Workflow IR
+│   │   ├── schema.rs              # Queue-specific YAML schema structs
+│   │   └── parser.rs              # YAML parser (queue config only)
 │   ├── artifacts/
 │   │   ├── mod.rs
 │   │   └── store.rs               # File-based artifact store
@@ -947,7 +886,7 @@ agent-queue/
     ├── integration/
     │   ├── queue_test.rs
     │   ├── scheduler_test.rs
-    │   └── agent_test.rs
+    │   └── transpiler_test.rs
     └── e2e/
         └── workflow_test.rs       # End-to-end workflow tests
 ```
@@ -963,16 +902,13 @@ console = "0.15"
 # Async runtime
 tokio = { version = "1", features = ["rt", "time", "sync", "fs", "process", "macros"] }
 
-# YAML
+# YAML (queue config only)
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled", "wal"] }
-
-# LLM
-llama-cpp-2 = "0.1"  # Check latest version
 
 # Logging
 tracing = "0.1"
@@ -1254,26 +1190,20 @@ Exit codes:
 | Scheduler tick loop (Tokio interval) | 4h | `src/queue/engine.rs` (tick loop) |
 | **Phase 2 Total** | **36h** | |
 
-### Phase 3: Agent SDK (Week 3-4)
+### Phase 3: Transpiler Integration (Week 3-4)
 
-**Goal**: LLM integration, step execution, tools — the brain.
+**Goal**: Integrate with yaml-to-rust-agentsdk for workflow execution.
 
 | Task | Effort | Deliverable |
 |------|--------|-------------|
-| LlmProvider trait definition | 2h | `src/model/provider.rs` |
-| llama-cpp-2 provider implementation | 8h | `src/model/llama_cpp.rs` |
-| Token counting | 3h | `src/model/token.rs` |
-| Context window management (budget, truncation) | 4h | `src/agent/context.rs` |
-| Step runner (sequential execution, input/output) | 6h | `src/agent/step_runner.rs` |
-| Prompt template rendering | 4h | `src/agent/step_runner.rs` (prompt section) |
-| Tool registry + permission model | 4h | `src/tools/registry.rs` |
-| Shell tool implementation | 3h | `src/tools/shell.rs` |
-| File read/write tools | 3h | `src/tools/file_read.rs`, `file_write.rs` |
-| Agent executor (orchestrates step runner + heartbeat) | 6h | `src/agent/executor.rs` |
-| Heartbeat management during execution | 3h | `src/agent/heartbeat.rs` |
-| Artifact collection + file storage | 3h | `src/artifacts/store.rs` |
-| Output parsing (structured extraction from LLM) | 4h | `src/agent/step_runner.rs` (output section) |
-| **Phase 3 Total** | **53h** | |
+| Transpiler integration interface | 4h | `src/transpiler/integration.rs` |
+| CLI invocation workflow | 6h | Execute transpiler CLI from queue engine |
+| Heartbeat management during transpiler execution | 4h | `src/transpiler/heartbeat.rs` |
+| Result parsing and error handling | 4h | `src/transpiler/result.rs` |
+| Artifact collection from transpiler output | 4h | `src/artifacts/store.rs` |
+| Environment variable passthrough | 2h | Queue → transpiler env var mapping |
+| Validation mode integration | 3h | Call transpiler validate for dry-run |
+| **Phase 3 Total** | **27h** | |
 
 ### Phase 4: CLI + Integration (Week 4-5)
 
@@ -1319,10 +1249,10 @@ Exit codes:
 |-------|--------|----------|
 | Phase 1: Foundation | 32h | 1 week |
 | Phase 2: Queue Engine | 36h | 1 week |
-| Phase 3: Agent SDK | 53h | 1.5 weeks |
+| Phase 3: Transpiler Integration | 27h | 0.75 weeks |
 | Phase 4: CLI + Integration | 46h | 1.5 weeks |
 | Phase 5: Testing + Polish | 36h | 1 week |
-| **Total** | **203h** | **~6 weeks** |
+| **Total** | **177h** | **~5 weeks** |
 
 ---
 
@@ -1361,10 +1291,9 @@ Exit codes:
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| **llama-cpp-2 API instability** | Agent execution broken | Pin version, abstract behind trait, fallback to mock provider for testing |
-| **Context window management complexity** | LLM calls fail or produce garbage | Conservative budgets, clear truncation strategy, extensive testing |
+| **Transpiler CLI/API changes** | Integration breaks | Version pinning, integration tests with stubbed responses, graceful degradation |
 | **SQLite concurrency under load** | WAL contention, slow writes | Single-writer pattern, batch writes, connection pooling |
-| **LLM output parsing reliability** | Structured extraction fails | Robust error handling, regex + JSON fallback, retry on parse failure |
+| **Transpiler execution hangs** | Lease expires, task reclaimed | Robust heartbeat management, timeout configuration, clear error propagation |
 
 ### Medium Risk
 
@@ -1418,9 +1347,9 @@ Exit codes:
 |---------|--------|-----|
 | REST API (Q-053) | 24h | Programmatic access |
 | Hook triggers (QL-026) | 20h | Event-driven workflows |
-| Multiple LLM providers (Q-059) | 16h | Cloud + local hybrid |
 | Schema registry (Q-050) | 12h | CI enforcement |
 | CI linting (Q-051) | 8h | Quality gates |
+| Transpiler API integration | 16h | Replace CLI with direct API calls |
 
 ---
 
@@ -1430,32 +1359,30 @@ Exit codes:
 
 | Area | Hours | % of Total |
 |------|-------|-----------|
-| State & Persistence | 40 | 20% |
-| Queue Engine | 36 | 18% |
-| Scheduling & Routing | 20 | 10% |
-| Agent SDK (LLM) | 30 | 15% |
-| Tools Framework | 14 | 7% |
-| Step Execution | 20 | 10% |
-| CLI | 26 | 13% |
-| Integration | 13 | 6% |
-| Testing | 32 | 16% |
-| **Contingency (20%)** | 40 | — |
-| **Total with contingency** | **~245h** | |
+| State & Persistence | 40 | 23% |
+| Queue Engine | 36 | 20% |
+| Scheduling & Routing | 20 | 11% |
+| Transpiler Integration | 27 | 15% |
+| CLI | 26 | 15% |
+| Integration | 13 | 7% |
+| Testing | 32 | 18% |
+| **Contingency (20%)** | 35 | — |
+| **Total with contingency** | **~229h** | |
 
 ### By Developer Profile
 
 | Profile | Phase | Effort | Notes |
 |---------|-------|--------|-------|
-| Senior Rust + LLM | Phase 1-3 | 121h | Can parallelize state + agent work |
-| Mid-level Rust | Phase 4-5 | 82h | CLI + testing can proceed with mocks |
-| Solo developer | All | 203h + 40h contingency | ~6-7 weeks full-time |
+| Senior Rust | Phase 1-3 | 95h | Can parallelize state + transpiler integration |
+| Mid-level Rust | Phase 4-5 | 82h | CLI + testing can proceed with stubbed transpiler |
+| Solo developer | All | 177h + 35h contingency | ~5-6 weeks full-time |
 
 ### Velocity Assumptions
 
 - **Developer**: Solo, senior-level Rust
 - **Hours per week**: 35 productive hours
-- **Weeks**: 6 (foundation) + 1 (buffer) = **7 weeks total**
-- **Model availability**: Local LLM model downloaded and ready
+- **Weeks**: 5 (foundation) + 1 (buffer) = **6 weeks total**
+- **Transpiler availability**: yaml-to-rust-agentsdk CLI installed and configured
 - **No blockers**: No external dependency issues
 
 ---
@@ -1463,12 +1390,11 @@ Exit codes:
 ## End of Document
 
 This MVP definition covers:
-- **55 features** (30 queue engine + 18 agentsdk + 7 integration)
-- **203 hours** of implementation effort (~6 weeks)
+- **40 features** (30 queue engine + 3 transpiler integration + 7 integration)
+- **177 hours** of implementation effort (~5 weeks)
 - **4 queue categories** (ASAP, Whenever, Scheduled-Once, Repeat-Cron)
-- **3 MVP tools** (shell, file_read, file_write)
-- **1 LLM provider** (llama-cpp-2) with trait abstraction for more
-- **7 CLI commands** (enqueue, list, inspect, cancel, retry, schedule, drain)
+- **Execution delegated** to yaml-to-rust-agentsdk (separate project)
+- **7 CLI commands** (enqueue, list, inspect, cancel, retry, schedule, drain, validate)
 - **10 success criteria** (must-have) + 5 should-have
 - **Post-MVP roadmap** through 4 evolution phases
 
