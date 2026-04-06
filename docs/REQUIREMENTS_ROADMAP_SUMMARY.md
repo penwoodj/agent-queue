@@ -1,6 +1,8 @@
 # Agent Queue System - Requirements & Roadmap Summary
 
-> **Purpose**: Summarize requirements and roadmap through 3 representative user stories showing all requirements in action.
+> **Purpose**: Summarize requirements and roadmap through 3 representative user stories showing queue orchestration requirements in action.
+>
+> **Important**: Agent Queue delegates workflow execution to yaml-to-rust-agentsdk. This document focuses on queue orchestration requirements only.
 
 ---
 
@@ -12,18 +14,19 @@
 
 **User Journey**:
 1. DevOps enqueues workflow via CLI: `agent-queue enqueue workflow:incident-diagnosis.yml --priority=critical --queue=asap`
-2. System validates YAML schema (Q-027) and computes workflow_hash (Q-042)
+2. System validates queue configuration (Q-027) and workflow schema (via transpiler validation)
 3. Router evaluates routing rules (Q-032) → assigns to **ASAP** queue (QL-001)
 4. Meta-scheduler selects ASAP queue first (QL-021) due to priority=10 (Q-012)
-5. Agent claims task via lease (Q-005) with 60s TTL (Q-038)
-6. Agent executes steps → RUNNING → DONE (Q-002)
+5. Queue engine claims task via lease (Q-005) with 60s TTL (Q-038)
+6. Queue engine dispatches to transpiler for execution → RUNNING → DONE (Q-002)
 7. System emits audit event (Q-020) and metrics (Q-021)
 
 **Requirements Used**:
 - Q-001 (Entities), Q-002 (State Machine), Q-003 (Ordering)
-- Q-005 (Leases), Q-012 (Priority), Q-027 (Validation)
+- Q-005 (Leases), Q-012 (Priority), Q-027 (Validation - queue config only)
 - Q-032 (Queue Routing), Q-038 (Heartbeats)
 - Q-020 (Audit), Q-021 (Observability)
+- **DELEGATED**: Workflow execution to transpiler (no Q requirements for this)
 
 ---
 
@@ -38,15 +41,16 @@
 4. Due time triggers execution at 2am Chicago timezone (Q-011)
 5. If no workers available → retry 3x with 60s delay (Q-008)
 6. After max attempts → escalate to ASAP with priority=high (Q-011)
-7. Agent executes with checkpointing every 30s (Q-039)
+7. Queue engine dispatches to transpiler (handles checkpointing via transpiler)
 8. Long-running task (4 hours) → extended lease via heartbeats (Q-038)
 9. Completion → DONE, artifacts stored for 30 days (Q-040)
 10. Metrics recorded: queue depth, latency, lease expirations (Q-021)
 
 **Requirements Used**:
 - Q-008 (Retries), Q-011 (Time), Q-038 (Heartbeats)
-- Q-039 (Checkpointing), Q-040 (Artifact Management)
-- Q-021 (Metrics), Q-022 (Logging), Q-023 (Tracing)
+- **DELEGATED**: Checkpointing (Q-039) to transpiler
+- Q-040 (Artifact Management - collection from transpiler)
+- Q-021 (Metrics), Q-022 (Logging), Q-023 (Tracing - queue-level only)
 
 ---
 
@@ -63,13 +67,14 @@
 6. Work stealing enabled → idle Agent Pool B steals from overloaded Pool A (Q-037)
 7. Backpressure applied → queue depth > 1000 triggers spillover (Q-007)
 8. Rate limiting enforced: max 100 tasks/min per tenant (Q-043)
-9. Agent processes 10 tasks in batch → input_hash computed (Q-042)
+9. Queue engine dispatches tasks to transpiler in batches
 10. Results stored → each tenant sees only their data (Q-018)
 
 **Requirements Used**:
 - Q-006 (Concurrency), Q-007 (Backpressure), Q-018 (Multi-Tenancy)
 - Q-034 (Fairness), Q-037 (Work Stealing), Q-043 (Rate Limiting)
 - Q-044 (Quotas), Q-012 (Priority + Aging)
+- **DELEGATED**: Batch processing to transpiler, input hashing (Q-042) to transpiler
 
 ---
 
@@ -102,9 +107,9 @@
 | **Q-034** | Fairness | 🔶 | 🔶 | ✅ | WRR, DRR, priority+aging strategies |
 | **Q-037** | Work Stealing | 🔶 | 🔶 | ✅ | Cross-pool task distribution |
 | **Q-038** | Heartbeats | ✅ | ✅ | ✅ | Lease extension + progress reporting |
-| **Q-039** | Checkpointing | 🔶 | ✅ | ✅ | Persist intermediate state for long tasks |
+| **Q-039** | Checkpointing | 🔶 | 🔶 | 🔶 | Persist intermediate state for long tasks (DELEGATED to transpiler) |
 | **Q-040** | Artifacts | 🔶 | ✅ | ✅ | Store outputs with retention policy |
-| **Q-042** | Input Hashing | 🔶 | 🔶 | ✅ | Canonical hash for caching/dedupe |
+| **Q-042** | Input Hashing | 🔶 | 🔶 | 🔶 | Canonical hash for caching/dedupe (DELEGATED to transpiler) |
 | **Q-043** | Rate Limiting | 🔶 | 🔶 | ✅ | Per-tenant and per-tool rate limits |
 | **Q-044** | Quotas | 🔶 | 🔶 | ✅ | Compute/storage quotas with enforcement |
 | **Q-019** | RBAC | ✅ | 🔶 | ✅ | Role-based permissions on enqueue, cancel, inspect |
@@ -215,13 +220,14 @@ flowchart TD
 |-----------|-----------|-------------|-----------------|-------------------|
 | **Phase 1: Foundation** | Core architecture | Week 1-2 | None | Entities, state machine, basic scheduling, persistence, validation |
 | **Phase 2: Core Components** | Queue engine primitives | Week 2-3 | Phase 1 | Priority system, leases, heartbeats, retries, DLQ, dependencies |
-| **Phase 3: Features** | Queue categories & advanced scheduling | Week 3-4 | Phase 2 | All 26 queue levels, cron semantics, work stealing, checkpointing |
-| **Phase 4: Data Layer** | Caching, hashing, migrations | Week 4-5 | Phase 3 | Step caching, input hashing, schema evolution |
+| **Phase 3: Features** | Queue categories & advanced scheduling | Week 3 | Phase 2 | Queue levels, cron semantics, work stealing (checkpointing delegated) |
+| **Phase 4: Data Layer** | Artifacts, migrations | Week 4 | Phase 3 | Artifact collection from transpiler, schema evolution |
 | **Phase 5: Governance** | Multi-tenancy & security | Week 5-6 | Phase 4 | Namespace isolation, quotas, RBAC, rate limits, secrets |
 | **Phase 6: Observability** | Metrics, logs, tracing | Week 6-7 | Phase 5 | Monitoring stack, audit logging, distributed tracing |
 | **Phase 7: Quality** | Testing & validation | Week 7-8 | Phase 6 | Linting, golden tests, property-based tests |
 | **Phase 8: Tooling** | CLI & API | Week 8-9 | Phase 7 | Command hierarchy, REST endpoints, schema registry |
 | **Phase 9: Deployment** | Production setup | Week 9-10 | Phase 8 | Migration scripts, observability stack, security setup |
+| **MVP Summary** | Queue orchestration only | Weeks 1-5 | None | Queue-only MVP: delegates execution to transpiler, ~5 weeks to functional queue system |
 
 ---
 
@@ -256,23 +262,27 @@ agent-queue/
 
 ## 🔑 Key Takeaways
 
-1. **Three Stories Cover All Domains**:
-   - Story 1 (ASAP): Urgency, priority, lease management, state transitions
-   - Story 2 (Scheduled): Time semantics, cron, retries, checkpointing, long-running tasks
-   - Story 3 (Batch): Multi-tenancy, fairness, quotas, work stealing, backpressure
+1. **Three Stories Cover Queue Orchestration**:
+    - Story 1 (ASAP): Urgency, priority, lease management, state transitions
+    - Story 2 (Scheduled): Time semantics, cron, retries, long-running tasks
+    - Story 3 (Batch): Multi-tenancy, fairness, quotas, work stealing, backpressure
 
 2. **Requirements Traceability**:
-   - 23 of 60 core requirements active across all stories
-   - Priority queues (Q-012), leases (Q-005), time (Q-011) most used
-   - Observability (Q-020, Q-021, Q-022, Q-023) critical for all
+    - Agent Queue focuses on queue orchestration (30 P0 requirements)
+    - Workflow execution delegated to transpiler (no Q requirements for execution)
+    - Priority queues (Q-012), leases (Q-005), time (Q-011) most used
+    - Observability (Q-020, Q-021, Q-022, Q-023) critical for all
+    - **Key Delegations**: Checkpointing (Q-039), input hashing (Q-042), execution logic
 
 3. **Roadmap Phases Are Sequential**:
-   - Each phase depends on previous phase
-   - Foundation → Components → Features → Data → Governance → Observability → Quality → Tooling → Deployment
-   - Total: 10 weeks to production-ready system
+    - Each phase depends on previous phase
+    - Foundation → Components → Features → Data → Governance → Observability → Quality → Tooling → Deployment
+    - MVP focuses on queue orchestration only (~5 weeks)
+    - Transpiler integration enables execution without reimplementing workflow engine
 
 4. **Implementation Guidance**:
-   - Follow flowchart for phase dependencies
-   - Use feature table for requirement mapping
-   - Reference diagrams for visual patterns
-   - Start with Phase 1 Foundation
+    - Follow flowchart for phase dependencies
+    - Use feature table for requirement mapping (queue requirements only)
+    - Reference diagrams for visual patterns
+    - Start with Phase 1 Foundation
+    - Integrate with transpiler via CLI (MVP) or library API (post-MVP)
