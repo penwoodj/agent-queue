@@ -39,38 +39,23 @@ This document maps every MVP requirement to its corresponding tests and verifica
 | QE-29 | Step error classification | `test_retryable_errors` | `test_non_retryable` | `test_error_classification` | Errors classified correctly |
 | QE-30 | Schema version header | `test_version_check` | `test_version_migration` | `test_version_cli` | Version validated |
 
-### YAML-to-Rust-Agentsdk Requirements (18)
+### Transpiler Integration Requirements (3)
 
 | ID | Requirement | Unit Test | Integration Test | E2E Test | Verification Criteria |
 |-----|-------------|------------|------------------|-------------|----------------------|
-| YA-01 | YAML schema | `test_schema_types` | `test_schema_validation` | `test_workflow_yaml` | Schema validates all fields |
-| YA-02 | Workflow IR | `test_ir_conversion` | `test_ir_serialization` | `test_workflow_ir` | IR matches YAML |
-| YA-03 | Single LLM provider | `test_llm_mock` | `test_llm_generation` | `test_llm_integration` | Mock LLM generates responses |
-| YA-04 | LLM provider trait | `test_trait_methods` | `test_trait_implementation` | `test_provider_swapping` | Trait allows future providers |
-| YA-05 | Step execution | `test_step_runner` | `test_sequential_steps` | `test_multi_step_workflow` | Steps execute in order |
-| YA-06 | Tool invocation | `test_tool_mock` | `test_tool_execution` | `test_tool_workflow` | Tools called correctly |
-| YA-07 | Tool permission | `test_allowlist` | `test_blocked_tools` | `test_permission_enforcement` | Blocked tools rejected |
-| YA-08 | Prompt rendering | `test_prompt_template` | `test_variable_substitution` | `test_prompt_rendering` | Prompts rendered correctly |
-| YA-09 | Step timeout | `test_timeout_config` | `test_timeout_enforcement` | `test_timeout_workflow` | Steps timeout after limit |
-| YA-10 | Step retry | `test_step_retry` | `test_step_retry_logic` | `test_step_retry_workflow` | Failed steps retry |
-| YA-11 | Context window | `test_token_counting` | `test_context_truncation` | `test_context_management` | Token limits enforced |
-| YA-12 | Output parsing | `test_output_extraction` | `test_structured_output` | `test_output_workflow` | Outputs parsed correctly |
-| YA-13 | Workflow config | `test_model_config` | `test_temperature_config` | `test_config_workflow` | Config applied correctly |
-| YA-14 | Environment vars | `test_env_resolution` | `test_secret_handling` | `test_env_workflow` | Env vars resolved |
-| YA-15 | Error handling | `test_continue_on_error` | `test_abort_on_error` | `test_error_handling` | Errors handled per config |
-| YA-16 | Artifact collection | `test_artifact_gather` | `test_artifact_storage` | `test_artifact_workflow` | Artifacts collected |
-| YA-17 | Basic metrics | `test_token_tracking` | `test_duration_tracking` | `test_metrics_workflow` | Metrics recorded |
-| YA-18 | Validation mode | `test_dry_run` | `test_validation_only` | `test_validate_cli` | Validates without execution |
+| IN-EX-01 | LLM provider abstraction | `test_provider_trait` | `test_transpiler_cli` | `test_transpiler_integration` | Abstraction allows future providers |
+| IN-EX-02 | Environment variable passthrough | `test_env_resolution` | `test_secret_handling` | `test_env_workflow` | Env vars resolved and passed |
+| IN-EX-03 | Deterministic validation mode | `test_validation_cli` | `test_validate_workflow` | `test_dry_run` | Validates without execution |
 
-### Integration Requirements (7)
+### Transpiler Integration Requirements (7)
 
 | ID | Requirement | Unit Test | Integration Test | E2E Test | Verification Criteria |
 |-----|-------------|------------|------------------|-------------|----------------------|
-| IN-01 | Queue dispatches to agent | `test_dispatch_logic` | `test_agent_dispatch` | `test_dispatch_workflow` | Queue triggers agent |
-| IN-02 | Agent reports back | `test_reporting_logic` | `test_state_update` | `test_completion_workflow` | Agent updates state |
+| IN-01 | Queue dispatches to transpiler | `test_dispatch_logic` | `test_transpiler_dispatch` | `test_dispatch_workflow` | Queue triggers transpiler |
+| IN-02 | Transpiler reports back | `test_reporting_logic` | `test_state_update` | `test_completion_workflow` | Transpiler updates state |
 | IN-03 | Lease extension via heartbeat | `test_heartbeat_extend` | `test_heartbeat_during_run` | `test_heartbeat_workflow` | Heartbeat extends lease |
-| IN-04 | Workflow input from queue | `test_input_passing` | `test_workflow_params` | `test_param_workflow` | Queue passes input |
-| IN-05 | Artifact handoff | `test_artifact_transfer` | `test_agent_to_queue` | `test_artifact_workflow` | Artifacts flow to queue |
+| IN-04 | Workflow input to transpiler | `test_input_passing` | `test_workflow_params` | `test_param_workflow` | Queue passes input |
+| IN-05 | Artifact handoff | `test_artifact_transfer` | `test_transpiler_to_queue` | `test_artifact_workflow` | Artifacts flow to queue |
 | IN-06 | Error propagation | `test_error_passing` | `test_retry_propagation` | `test_error_workflow` | Errors trigger retry |
 | IN-07 | Single process architecture | `test_process_integration` | `test_shared_state` | `test_single_process` | All components in one process |
 
@@ -95,19 +80,9 @@ This document maps every MVP requirement to its corresponding tests and verifica
 | Artifacts | 1 | 1 | 1 | 1 | 100% |
 | Backpressure | 1 | 1 | 1 | 1 | 100% |
 | Admission | 1 | 1 | 1 | 1 | 100% |
-| YAML Schema | 1 | 1 | 1 | 1 | 100% |
-| Workflow IR | 1 | 1 | 1 | 1 | 100% |
-| LLM Provider | 2 | 2 | 2 | 2 | 100% |
-| Execution Engine | 3 | 3 | 3 | 3 | 100% |
-| Tools | 2 | 2 | 2 | 2 | 100% |
-| Prompts | 2 | 2 | 2 | 2 | 100% |
-| Timeouts | 1 | 1 | 1 | 1 | 100% |
-| Context | 1 | 1 | 1 | 1 | 100% |
-| Output | 1 | 1 | 1 | 1 | 100% |
-| Secrets | 1 | 1 | 1 | 1 | 100% |
-| Validation Mode | 1 | 1 | 1 | 1 | 100% |
+| Transpiler Integration | 3 | 3 | 3 | 3 | 100% |
 | Integration | 7 | 7 | 7 | 7 | 100% |
-| **Total** | **55** | **55** | **55** | **55** | **100%** |
+| **Total** | **40** | **40** | **40** | **40** | **100%** |
 
 ## Verification Checklist
 
