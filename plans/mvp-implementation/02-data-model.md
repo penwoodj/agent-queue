@@ -1,5 +1,11 @@
 # Data Model and SQLite Schema
 
+> **Ownership Boundary** (per IN-11): agent-queue tracks **orchestration state**
+> (run lifecycle, scheduling, retry, audit). The transpiler tracks **execution state**
+> (step progress, checkpoints, token usage, intermediate results). agent-queue's
+> Step records are **metadata-only summaries** — populated from transpiler's final
+> result, not updated during execution.
+
 ## Entity Types
 
 ### Workflow
@@ -53,30 +59,40 @@ pub struct Run {
 
 ### Step
 
-Represents a single step in a workflow execution.
+Represents a **metadata-only summary** of a transpiler workflow step.
+Populated from the transpiler's final result payload — not updated in real-time during execution.
+
+> **Why metadata-only?** The transpiler handles step-level execution internally
+> (step progress, checkpoints, retries within a step). agent-queue only needs
+> the summary for audit trail and user inspection. Per IN-11, detailed step
+> state belongs to the transpiler.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub id: String,
     pub run_id: String,
-    pub step_id: String,        // From YAML step definition
-    pub step_index: u32,       // Execution order
-    pub state: StepState,
-    pub input_text: Option<String>,
-    pub output_text: Option<String>,
-    pub token_usage_json: Option<String>,  // Serialized TokenUsage
-    pub error_message: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub duration_ms: Option<u64>,
-    pub attempts: u32,
+    pub step_id: String,        // From transpiler result
+    pub step_index: u32,        // Execution order from transpiler
+    pub state: StepState,       // Final state reported by transpiler
+    pub output_summary: Option<String>,  // Truncated output (first 1KB)
+    pub token_usage_json: Option<String>,  // Serialized TokenUsage from transpiler
+    pub error_message: Option<String>,     // Error if step failed
+    pub duration_ms: Option<u64>,         // Reported by transpiler
+    pub created_at: DateTime<Utc>,
 }
 ```
 
+> **Removed fields vs. original design**:
+> - `input_text` — transpiler manages inputs
+> - `started_at`, `completed_at` — transpiler manages timing
+> - `attempts` — transpiler manages step-level retry (disabled per IN-09 for MVP)
+
 ### Artifact
 
-Represents an output file from a workflow execution.
+Represents **metadata** about an output file from a transpiler execution.
+Per IN-12, agent-queue tracks metadata (path, size, retention) but does not
+copy or manage the actual files — the transpiler owns artifact lifecycle.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,12 +100,19 @@ pub struct Artifact {
     pub id: String,
     pub run_id: String,
     pub step_id: Option<String>,
-    pub path: String,
+    pub path: String,              // Path as reported by transpiler
     pub size_bytes: u64,
-    pub retention_days: u32,
+    pub content_type: String,      // Inferred from extension
+    pub retention_days: u32,       // Default: 30
     pub created_at: DateTime<Utc>,
 }
 ```
+
+> **Artifact lifecycle** (per IN-12):
+> 1. Transpiler creates artifacts during execution
+> 2. Transpiler reports artifact paths in result payload
+> 3. agent-queue stores metadata only
+> 4. Cleanup is optional — agent-queue can delete based on retention policy
 
 ### AuditLog
 
@@ -166,14 +189,16 @@ pub enum RunState {
 
 ### StepState
 
+> **Note**: These are the states reported by the transpiler in its final result.
+> agent-queue does NOT track step-level transitions in real-time.
+
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepState {
-    Pending,       // Not yet started
-    Running,       // Currently executing
-    Completed,     // Success
-    Failed,        // Failed, may retry
+    Completed,     // Step succeeded
+    Failed,        // Step failed (error details in error_message)
+    Skipped,       // Step was skipped (conditional execution)
 }
 ```
 
@@ -234,35 +259,31 @@ CREATE INDEX idx_runs_lease ON runs(lease_expiry) WHERE state IN ('leased', 'run
 CREATE INDEX idx_runs_idempotency ON runs(idempotency_key);
 CREATE INDEX idx_runs_workflow ON runs(workflow_id);
 
--- Steps: Individual step executions
+-- Steps: Metadata-only step summaries from transpiler results
 CREATE TABLE steps (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),
     step_id TEXT NOT NULL,
     step_index INTEGER NOT NULL,
-    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'running', 'completed', 'failed')),
-    input_text TEXT,
-    output_text TEXT,
+    state TEXT NOT NULL CHECK(state IN ('completed', 'failed', 'skipped')),
+    output_summary TEXT,
     token_usage_json TEXT,
     error_message TEXT,
-    started_at TEXT,
-    completed_at TEXT,
     duration_ms INTEGER,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX idx_steps_run ON steps(run_id, step_index);
 CREATE INDEX idx_steps_state ON steps(state);
 
--- Artifacts: Output files
+-- Artifacts: Metadata-only records (per IN-12)
 CREATE TABLE artifacts (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),
     step_id TEXT,
     path TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
     retention_days INTEGER NOT NULL DEFAULT 30,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

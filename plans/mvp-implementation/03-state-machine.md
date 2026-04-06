@@ -1,5 +1,15 @@
 # State Machine Implementation
 
+## Transpiler-Queue State Ownership (per IN-11)
+
+> **Critical distinction**: agent-queue manages **orchestration state** (the 10-state
+> run lifecycle below). The transpiler manages **execution state** (step progress,
+> checkpoints, validation loops). These are separate systems with separate state machines.
+>
+> When a run is in `RUNNING`, the transpiler may be minutes into multi-step execution.
+> agent-queue only sees: "leased → running → [heartbeat...] → done/failed".
+> It does NOT track individual step transitions.
+
 ## State Transitions
 
 ### Complete Transition Graph
@@ -113,6 +123,12 @@ impl RunState {
 **Valid**: LEASED → RUNNING, LEASED → EXPIRED, LEASED → QUEUED, LEASED → CANCELED
 
 ### From RUNNING
+
+> **QE-02 Refinement**: Per the updated requirement, a run stays in `RUNNING`
+> throughout the entire transpiler execution. The transpiler may execute multiple
+> steps internally, but agent-queue only transitions out of RUNNING when the
+> transpiler process exits (success → DONE, error → FAILED, timeout → EXPIRED).
+> Heartbeats keep the lease alive during long-running executions (per IN-14).
 
 ```rust
 impl RunState {

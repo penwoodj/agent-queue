@@ -13,8 +13,8 @@ This plan suite implements the **Agent Queue System MVP** with **transpiler inte
 ✅ **State Machine** - All state transitions with validation
 ✅ **5 Implementation Phases** - Detailed task breakdown with effort estimates
 ✅ **Transpiler Integration** - CLI/API interface to yaml-to-rust-agentsdk
-✅ **Comprehensive Testing Strategy** - 120 tests across 3 test types (40 queue requirements)
-✅ **Verification Matrix** - All 40 MVP requirements mapped to tests
+✅ **Comprehensive Testing Strategy** - 192 tests across 3 test types (48 queue requirements)
+✅ **Verification Matrix** - All 48 MVP requirements mapped to tests
 ✅ **Success Criteria** - 10 must-have + 5 should-have criteria
 
 ## Directory Structure
@@ -22,26 +22,19 @@ This plan suite implements the **Agent Queue System MVP** with **transpiler inte
 ```
 plans/mvp-implementation/
 ├── 00-overview.md              # This summary
-├── 01-architecture.md          # Architecture with stubbed components
-├── 02-data-model.md            # Complete SQLite schema
+├── 01-architecture.md          # Architecture with transpiler integration
+├── 02-data-model.md            # Complete SQLite schema (metadata-only steps/artifacts)
 ├── 03-state-machine.md         # State machine implementation
 ├── phases/
 │   ├── 01-foundation.md        # Week 1: Entities, state, persistence (32h)
 │   ├── 02-queue-engine.md     # Week 2: Scheduling, leases, retries (36h)
 │   ├── 03-transpiler-integration.md   # Week 3: Transpiler integration (27h)
-│   ├── 04-cli-integration.md  # Week 4: CLI + integration (46h)
-│   └── 05-testing-polish.md   # Week 5: Testing + verification (36h)
-├── tests/
-│   ├── unit/                  # Unit test specifications (55 tests)
-│   ├── integration/           # Integration test specifications (55 tests)
-│   └── e2e/                  # End-to-end test specifications (55 tests)
-├── mocks/
-│   ├── transpiler.rs          # Mock transpiler for testing
-│   └── executor.rs            # Execution interface code
-└── verification/
-    ├── requirements-traceability.md  # 55 requirements → tests mapping
-    ├── success-criteria.md          # 15 success criteria checklist
-    └── test-coverage.md            # Test coverage matrix
+│   ├── 04-cli-integration.md  # Week 4-5: CLI + integration (46h)
+│   └── 05-testing-polish.md   # Week 5-6: Testing + verification (36h)
+├── verification/
+│   ├── requirements-traceability.md  # 48 requirements → tests mapping
+│   └── success-criteria.md          # 15 success criteria checklist
+└── tests/                                    # Test specifications
 ```
 
 ## Implementation Timeline
@@ -136,21 +129,18 @@ Tasks:
 
 ## Key Design Decisions
 
-### 1. Stubbed Execution Engine
+### 1. Transpiler Delegation
 
-**Why**: Real LLM calls are slow and expensive. Stubbed execution allows:
-- Rapid iteration on queue engine
-- Deterministic test results
-- No external dependencies
-- Focus on queue semantics, not agent behavior
+**Why**: Workflow execution is already fully implemented in `yaml-to-rust-agentsdk`. Reimplementing it would be wasted effort. agent-queue focuses on what the transpiler doesn't do: queue orchestration, scheduling, state management, retry, DLQ, audit.
 
-**How**: Sleep-based mocks simulate:
-- LLM latency: 5-30 seconds per step
-- Tool execution: 1-5 seconds per tool
-- Failures: 10% random failure rate
-- Context window exhaustion: 1% rare event
+**How**: Transpiler invoked as CLI subprocess. agent-queue manages:
+- Queue lifecycle (enqueue → schedule → lease → run → done/failed)
+- Retry with exponential backoff (queue-level, per IN-09)
+- Heartbeat keep-alive during long transpiler executions
+- Error classification and DLQ routing
+- Artifact metadata tracking
 
-**Result**: Full queue engine testing without real LLM
+**Result**: agent-queue is a queue orchestrator, not an agent runtime.
 
 ---
 
@@ -199,25 +189,25 @@ Tasks:
 
 ### Test Types
 
-#### Unit Tests (55 tests)
+#### Unit Tests (48 tests)
 Test individual components in isolation
 - Fast execution (< 1s per test)
-- Use mocks for external dependencies
-- Location: `tests/unit/`
+- Mock transpiler interface (not mock LLM)
+- Location: `src/*/tests/`
 
-#### Integration Tests (55 tests)
+#### Integration Tests (48 tests)
 Test component interactions
 - Use in-memory SQLite
-- Simulate real workflows
+- Mock transpiler for execution simulation
 - Location: `tests/integration/`
 
-#### End-to-End Tests (55 tests)
+#### End-to-End Tests (48 tests)
 Test complete user journeys
 - Use real CLI commands
 - Verify all state transitions
 - Location: `tests/e2e/`
 
-**Total**: 165 tests
+**Total**: 144 tests + 12 error scenario tests = 156 tests
 
 ---
 
@@ -228,9 +218,8 @@ Test complete user journeys
 | Entities & State | 3 | 3 | 3 | 9 | 100% |
 | Queue Engine | 20 | 20 | 20 | 60 | 100% |
 | Transpiler Integration | 7 | 7 | 7 | 21 | 100% |
-| Integration | 7 | 7 | 7 | 21 | 100% |
-| CLI | 13 | 13 | 13 | 39 | 100% |
-| **Total** | **50** | **50** | **50** | **150** | **100%** |
+| CLI & Integration | 18 | 18 | 18 | 54 | 100% |
+| **Total** | **48** | **48** | **48** | **144** | **100%** |
 
 ---
 
@@ -270,11 +259,11 @@ System is **significantly better** if these pass:
 - Tool: `cargo tarpaulin`
 
 ### Requirement Coverage
-- Target: 100% of 55 MVP requirements
+- Target: 100% of 48 MVP requirements
 - Current: Planned 100%
 
 ### Test Pass Rate
-- Target: 100% of 165 tests pass
+- Target: 100% of 156 tests pass
 
 ### Performance Targets
 - Enqueue latency: < 100ms
@@ -312,11 +301,11 @@ cargo build
    - Implement lease management
    - Write integration tests
 
-3. **Phase 3**: Stubbed Agent Executor
-   - Read `phases/03-agent-sdk-mock.md`
-   - Implement mock LLM provider
-   - Implement mock tools
-   - Implement stubbed executor
+3. **Phase 3**: Transpiler Integration
+   - Read `phases/03-transpiler-integration.md`
+   - Implement CLI invocation interface
+   - Implement heartbeat management
+   - Implement result parsing and error classification
    - Test with queue engine
 
 4. **Phase 4**: CLI + Integration
@@ -440,8 +429,9 @@ This plan suite provides:
 
 ✅ **Complete architecture** with transpiler integration
 ✅ **5 implementation phases** with detailed tasks (177 hours)
-✅ **150 tests** across 3 test types (100% requirement coverage for 40 queue requirements)
+✅ **156 tests** across 3 test types + error scenarios (100% requirement coverage for 48 queue requirements)
 ✅ **15 success criteria** for verification
+✅ **8 integration requirements** (IN-08 through IN-15) for robust transpiler coupling
 ✅ **Comprehensive documentation** for each component
 
 **Result**: A production-ready queue orchestration MVP that delegates workflow execution to yaml-to-rust-agentsdk.

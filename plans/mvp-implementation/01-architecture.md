@@ -1,33 +1,36 @@
-# Architecture Design with Stubbed Components
+# Architecture Design with Transpiler Integration
 
 ## High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    agent-queue (single process)                │
-│                                                               │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐  │
-│  │   CLI    │───▶│ Queue Engine  │───▶│ Stubbed Agent    │  │
-│  │  (Clap)  │◀───│  (Scheduler)  │◀───│   Executor       │  │
-│  └──────────┘    └──────┬───────┘    └────────┬─────────┘  │
-│                         │                      │              │
-│                    ┌────▼────┐         ┌───────▼───────┐    │
-│                    │ SQLite  │         │  Mock LLM      │    │
-│                    │  (WAL)  │         │  (Sleep sim)   │    │
-│                    │         │         │  + failures    │    │
-│                    └─────────┘         └───────────────┘    │
-│                                              │              │
-│                                       ┌──────┴───────┐     │
-│                                       │ Mock Tools     │     │
-│                                       │ (Latency sim)  │     │
-│                                       └───────────────┘     │
-│                                                               │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐  │
-│  │  Logs    │    │  Artifacts   │    │  Audit Trail    │  │
-│  │ (tracing)│    │  (files)     │    │  (append-only)  │  │
-│  └──────────┘    └──────────────┘    └──────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                      agent-queue (single process)                   │
+│                                                                      │
+│  ┌──────────┐    ┌──────────────┐    ┌───────────────────────────┐ │
+│  │   CLI    │───▶│ Queue Engine  │───▶│ Transpiler Integration    │ │
+│  │  (Clap)  │◀───│  (Scheduler)  │◀───│ (CLI invocation / API)    │ │
+│  └──────────┘    └──────┬───────┘    └─────────────┬─────────────┘ │
+│                         │                          │                │
+│                    ┌────▼────┐               ┌──────▼────────────┐  │
+│                    │ SQLite  │               │ yaml-to-rust-     │  │
+│                    │  (WAL)  │               │ agentsdk          │  │
+│                    │         │               │ (external process) │  │
+│                    └─────────┘               └──────┬────────────┘  │
+│                                                     │               │
+│                                              ┌──────┴──────────┐   │
+│                                              │ Artifacts        │   │
+│                                              │ (metadata-only)  │   │
+│                                              └─────────────────┘   │
+│                                                                      │
+│  ┌──────────┐    ┌──────────────┐    ┌──────────────────────────┐  │
+│  │  Logs    │    │   Audit      │    │  Heartbeat Manager       │  │
+│  │ (tracing)│    │  Trail       │    │  (lease keep-alive)      │  │
+│  └──────────┘    │(append-only) │    └──────────────────────────┘  │
+│                  └──────────────┘                                   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Key Principle**: agent-queue handles **queue orchestration** (scheduling, state, retry, DLQ, audit). Workflow **execution** is fully delegated to `yaml-to-rust-agentsdk`. agent-queue never reimplements LLM calls, tool execution, or step orchestration.
 
 ## Component Responsibilities
 
@@ -43,7 +46,7 @@
 - **scheduler.rs**: Meta-scheduler and task selection
 - **categories.rs**: Queue category definitions (ASAP, Whenever, Scheduled, Cron)
 - **lease.rs**: Lease management, heartbeat, expiry, reclaim
-- **retry.rs**: Retry logic with exponential backoff
+- **retry.rs**: Retry logic with exponential backoff (queue-level only — per IN-09)
 - **routing.rs**: Queue routing based on YAML metadata
 - **backpressure.rs**: Admission control and queue depth limits
 
@@ -53,36 +56,15 @@
 - **transitions.rs**: Valid transition table
 - **store.rs**: SQLite persistence layer
 
-### Stubbed Agent Executor (src/agent/mock/)
-- **executor.rs**: Orchestrates step execution (STUBBED)
-- **step_runner.rs**: Sequential step execution (STUBBED)
-- **heartbeat.rs**: Lease heartbeat during execution (STUBBED)
-- **context.rs**: Context window management (STUBBED)
+### Transpiler Integration (src/transpiler/)
+- **integration.rs**: CLI invocation interface to yaml-to-rust-agentsdk
+- **heartbeat.rs**: Lease heartbeat during long-running transpiler executions
+- **result.rs**: Result parsing, error classification, artifact extraction
+- **env.rs**: Environment variable resolution and passthrough
 
-### Mock Components (src/mock/)
-- **llm_provider.rs**: Mock LLM with sleep simulation
-  - Generates fake responses after 5-30s delay
-  - Simulates 10% failure rate
-  - Simulates context window exhaustion (1% chance)
-- **tools.rs**: Mock tools with latency
-  - shell: 1-3s delay
-  - file_read: 0.5-1s delay
-  - file_write: 1-2s delay
-
-### Real Components (src/agent/)
-These would connect to actual workflow engine (not needed for MVP):
-
-```rust
-// Placeholder for real executor
-pub struct RealExecutor {
-    // Would connect to transpiler workflow engine
-}
-
-// Stub executor for MVP
-pub struct StubExecutor {
-    // Uses sleep-based mocks
-}
-```
+> **Not in agent-queue**: No LLM provider trait, no tool execution, no step runner.
+> These are all handled by yaml-to-rust-agentsdk. See
+> [TRANSPILER_INTEGRATION_SPEC.md](../../docs/TRANSPILER_INTEGRATION_SPEC.md) for the full contract.
 
 ## Data Flow
 
@@ -95,39 +77,43 @@ CLI enqueue command
     ├─▶ Create workflow entity
     ├─▶ Create run entity
     ├─▶ Route to appropriate queue
-    └─▶ Queue Engine: task → NEW → QUEUED
+    └─▶ Queue Engine: run → NEW → QUEUED
         │
-        └─▶ Scheduler: selects task based on priority
+        └─▶ Scheduler: selects run based on priority
             │
-            └─▶ Queue Engine: task → LEASED
+            └─▶ Queue Engine: run → LEASED
                 │
-                └─▶ Stubbed Agent Executor
+                └─▶ Transpiler Integration
                     │
-                    ├─▶ Load workflow YAML
-                    ├─▶ For each step:
-                    │   ├─▶ Mock LLM call (5-30s)
-                    │   ├─▶ Mock tool calls (1-5s)
-                    │   ├─▶ Send heartbeat (every 15s)
-                    │   └─▶ Collect artifacts
-                    │
-                    └─▶ Report completion
+                    ├─▶ Invoke yaml-to-rust-agentsdk (CLI subprocess)
+                    ├─▶ Send heartbeat (every 15s, maintains lease)
+                    └─▶ Collect result + artifact metadata
                         │
-                        └─▶ Queue Engine: task → DONE or FAILED
+                        └─▶ Report completion/failure
                             │
-                            └─▶ If FAILED: retry → DLQ
+                            └─▶ Queue Engine: run → DONE or FAILED
+                                │
+                                └─▶ If FAILED: retry → DLQ
 ```
+
+> **Note**: agent-queue does NOT step through individual workflow steps.
+> The transpiler handles all step execution internally. agent-queue only sees
+> the final result (success/failure, artifact list, error details).
 
 ## Key Design Decisions
 
 ### 1. Single Process Architecture
 - All components run in one Tokio runtime
-- No inter-process communication
-- Simplifies MVP development
+- Transpiler invoked as external CLI subprocess
+- No inter-process communication needed beyond subprocess stdout/stderr
 
-### 2. Stubbed Execution Engine
-- Simulates real execution with sleep-based delays
-- Allows testing queue engine without real LLM
-- Focus on queue semantics, not agent behavior
+### 2. Transpiler Delegation (not stubbed execution)
+- Workflow execution fully delegated to `yaml-to-rust-agentsdk`
+- No mock LLM, no mock tools, no stubbed step runner in agent-queue
+- Agent-queue is a queue orchestrator, not an agent runtime
+- Per IN-08: adopts transpiler's YAML schema for workflow definitions
+- Per IN-09: disables transpiler internal retry (queue handles retry)
+- Per IN-10: tool execution is entirely within transpiler scope
 
 ### 3. SQLite with WAL Mode
 - Single-writer pattern
@@ -138,11 +124,12 @@ CLI enqueue command
 - All logs as JSON with tracing
 - Correlation IDs for all operations
 - Enables post-mortem analysis
+- Per IN-14: log format compatible with transpiler's 9-level hierarchy
 
-### 5. Trait-Based Abstractions
-- LlmProvider trait for future real providers
-- Tool trait for extensibility
-- Easy to swap real implementation later
+### 5. Trait-Based Transpiler Abstraction
+- `TranspilerIntegration` trait for invoking the transpiler
+- CLI invocation for MVP, library API for post-MVP
+- Easy to swap invocation strategy or add caching
 
 ## Error Handling Strategy
 
@@ -150,25 +137,43 @@ CLI enqueue command
 
 ```rust
 pub enum ErrorClass {
-    Retryable,      // Transient: retry with backoff
-    NonRetryable,   // Permanent: go to DLQ
-    Fatal,          // System error: abort
+    Retryable,      // Transient: retry with backoff (transpiler timeout, LLM rate limit)
+    NonRetryable,   // Permanent: go to DLQ (invalid YAML, auth failure)
+    Fatal,          // System error: abort (database corruption, out of memory)
 }
+```
+
+### Error Classification Protocol (per IN-13)
+
+Errors from the transpiler are classified using a shared protocol:
+
+1. **Transpiler reports error**: Includes `error_type`, `message`, `retryable` flag
+2. **Queue classifies**: Maps transpiler error to queue error class
+3. **Queue acts**: Retryable → retry with backoff, NonRetryable → DLQ, Fatal → abort
+
+```rust
+// Error mapping examples:
+// Transpiler "LLMRateLimit"   → Queue Retryable
+// Transpiler "Timeout"        → Queue Retryable
+// Transpiler "InvalidYAML"    → Queue NonRetryable
+// Transpiler "AuthFailed"     → Queue NonRetryable
+// Transpiler "DiskFull"       → Queue Fatal
 ```
 
 ### Error Recovery
 
-1. **Retryable Errors**:
-   - LLM timeout
-   - Network timeout (if network tools existed)
+1. **Retryable Errors** (queue handles retry, per IN-09 transpiler retry is disabled):
+   - Transpiler process timeout
+   - LLM provider rate limiting (reported by transpiler)
+   - Network connectivity (transpiler subprocess fails to start)
    - Temporary resource exhaustion
 
-2. **Non-Retryable Errors**:
-   - Invalid YAML
-   - Permission denied
-   - Context window exceeded
+2. **NonRetryable Errors** (sent to DLQ):
+   - Invalid workflow YAML (caught by transpiler validation)
+   - Authentication failure (API keys missing/invalid)
+   - Transpiler reports non-retryable execution error
 
-3. **Fatal Errors**:
+3. **Fatal Errors** (abort):
    - Database corruption
    - Out of memory
    - System crash
@@ -177,18 +182,19 @@ pub enum ErrorClass {
 
 ### Unit Tests
 - Test individual components in isolation
-- Use mocks for external dependencies
+- Mock transpiler CLI interface (not mock LLM — agent-queue never touches LLM)
 - Fast execution (< 1s per test)
 
 ### Integration Tests
 - Test component interactions
-- Use in-memory SQLite
-- Simulate real workflows
+- Use mock transpiler binary or in-memory SQLite
+- Simulate real transpiler responses (success, failure, timeout)
 
 ### End-to-End Tests
 - Test complete user journeys
 - Use real CLI commands
 - Verify all state transitions
+- May use real transpiler for smoke tests (optional)
 
 ### Property-Based Tests
 - Test invariants with random inputs
@@ -243,20 +249,21 @@ Every operation emits:
 
 ### MVP Security
 
-1. **Tool Allowlist**:
-   - Default deny
-   - Explicit allow per workflow
-   - No network tools in MVP
+1. **Subprocess Isolation**:
+   - Transpiler runs as separate process
+   - Environment variables passed explicitly (never inherited)
+   - No secrets stored in database or logs
 
 2. **Path Restrictions**:
-   - Tools limited to workspace
-   - No absolute paths
-   - No symlink traversal
+   - Artifacts tracked in managed location
+   - Working directory scoped per execution
+   - No symlink traversal for artifact paths
 
 3. **Secrets Management**:
    - Environment variables only
    - No secrets in YAML
    - No secrets in logs
+   - Env var names stored, resolved values never persisted
 
 ### Future Security (Post-MVP)
 
