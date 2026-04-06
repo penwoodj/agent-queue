@@ -2,19 +2,19 @@
 
 ## Overview
 
-This plan suite implements the **Agent Queue System MVP** with a **stubbed execution engine** that uses complex sleeping to simulate real LLM operations. This approach allows thorough verification of all queue engine requirements without needing the actual workflow execution engine.
+This plan suite implements the **Agent Queue System MVP** with **transpiler integration** that delegates workflow execution to `yaml-to-rust-agentsdk`. This approach focuses on queue orchestration requirements without reimplementing the workflow execution engine.
 
 ## What You Get
 
 ### Complete Implementation Plan
 
-✅ **Architecture Design** - Full component design with stubbed integration
+✅ **Architecture Design** - Full component design with transpiler integration
 ✅ **Data Model** - Complete SQLite schema and entity definitions
 ✅ **State Machine** - All state transitions with validation
 ✅ **5 Implementation Phases** - Detailed task breakdown with effort estimates
-✅ **Stubbed Execution Engine** - Sleep-based mocks for LLM and tools
-✅ **Comprehensive Testing Strategy** - 165 tests across 3 test types
-✅ **Verification Matrix** - All 55 MVP requirements mapped to tests
+✅ **Transpiler Integration** - CLI/API interface to yaml-to-rust-agentsdk
+✅ **Comprehensive Testing Strategy** - 120 tests across 3 test types (40 queue requirements)
+✅ **Verification Matrix** - All 40 MVP requirements mapped to tests
 ✅ **Success Criteria** - 10 must-have + 5 should-have criteria
 
 ## Directory Structure
@@ -28,17 +28,16 @@ plans/mvp-implementation/
 ├── phases/
 │   ├── 01-foundation.md        # Week 1: Entities, state, persistence (32h)
 │   ├── 02-queue-engine.md     # Week 2: Scheduling, leases, retries (36h)
-│   ├── 03-agent-sdk-mock.md   # Week 3: Stubbed execution engine (53h)
-│   ├── 04-cli-integration.md  # Week 4-5: CLI + integration (46h)
-│   └── 05-testing-polish.md   # Week 5-6: Testing + verification (36h)
+│   ├── 03-transpiler-integration.md   # Week 3: Transpiler integration (27h)
+│   ├── 04-cli-integration.md  # Week 4: CLI + integration (46h)
+│   └── 05-testing-polish.md   # Week 5: Testing + verification (36h)
 ├── tests/
 │   ├── unit/                  # Unit test specifications (55 tests)
 │   ├── integration/           # Integration test specifications (55 tests)
 │   └── e2e/                  # End-to-end test specifications (55 tests)
 ├── mocks/
-│   ├── executor.rs            # Stubbed execution engine code
-│   ├── llm_provider.rs        # Mock LLM with sleep simulation
-│   └── tools.rs              # Mock tools with latency
+│   ├── transpiler.rs          # Mock transpiler for testing
+│   └── executor.rs            # Execution interface code
 └── verification/
     ├── requirements-traceability.md  # 55 requirements → tests mapping
     ├── success-criteria.md          # 15 success criteria checklist
@@ -80,20 +79,19 @@ Tasks:
 
 ---
 
-### Phase 3: Stubbed Agent Executor (Week 3 - 53 hours)
-**Deliverable**: Mock execution engine for testing
+### Phase 3: Transpiler Integration (Week 3 - 27 hours)
+**Deliverable**: Transpiler integration for workflow execution
 
 Tasks:
-1. Mock LLM provider with sleep (8h)
-2. Mock tools with latency (3h)
-3. Stubbed executor (6h)
-4. Step runner (6h)
-5. Heartbeat manager (3h)
-6. Context manager (4h)
-7. Artifact collector (3h)
-8. Integration with queue (6h)
+1. Transpiler CLI integration interface (4h)
+2. CLI invocation workflow (6h)
+3. Heartbeat management during transpiler execution (4h)
+4. Result parsing and error handling (4h)
+5. Artifact collection from transpiler output (4h)
+6. Environment variable passthrough (2h)
+7. Validation mode integration (3h)
 
-**Outcome**: Simulates real agent behavior without real LLM calls
+**Outcome**: Queue orchestrates transpiler for workflow execution
 
 ---
 
@@ -110,8 +108,8 @@ Tasks:
 7. schedule command (3h)
 8. drain command (2h)
 9. validate command (2h)
-10. Queue to agent integration (6h)
-11. Agent to state transitions (4h)
+10. Queue to transpiler integration (6h)
+11. Transpiler to state transitions (4h)
 12. Error propagation (3h)
 13. Cron scheduler (6h)
 
@@ -229,10 +227,10 @@ Test complete user journeys
 |------|-------|-------------|------|-------|----------|
 | Entities & State | 3 | 3 | 3 | 9 | 100% |
 | Queue Engine | 20 | 20 | 20 | 60 | 100% |
-| Agent SDK (Mock) | 12 | 12 | 12 | 36 | 100% |
+| Transpiler Integration | 7 | 7 | 7 | 21 | 100% |
 | Integration | 7 | 7 | 7 | 21 | 100% |
 | CLI | 13 | 13 | 13 | 39 | 100% |
-| **Total** | **55** | **55** | **55** | **165** | **100%** |
+| **Total** | **50** | **50** | **50** | **150** | **100%** |
 
 ---
 
@@ -440,10 +438,10 @@ Each phase includes:
 
 This plan suite provides:
 
-✅ **Complete architecture** with stubbed execution engine
-✅ **5 implementation phases** with detailed tasks (203 hours)
-✅ **165 tests** across 3 test types (100% requirement coverage)
+✅ **Complete architecture** with transpiler integration
+✅ **5 implementation phases** with detailed tasks (177 hours)
+✅ **150 tests** across 3 test types (100% requirement coverage for 40 queue requirements)
 ✅ **15 success criteria** for verification
 ✅ **Comprehensive documentation** for each component
 
-**Result**: A production-ready MVP that can be thoroughly verified without real LLM dependencies.
+**Result**: A production-ready queue orchestration MVP that delegates workflow execution to yaml-to-rust-agentsdk.
