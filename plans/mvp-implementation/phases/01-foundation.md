@@ -1,20 +1,57 @@
 # Phase 1: Foundation (Week 1)
 
+**32 hours**
+
 ## Goal
 
-Establish the core data structures, state machine, persistence layer, and validation infrastructure. This phase creates the skeleton that all other components depend on.
+Establish the project scaffold, core data structures, state machine, persistence layer, and validation infrastructure. This phase creates the skeleton that all other components depend on.
 
 ## Deliverables
 
 | Task | File | Description |
 |------|------|-------------|
+| Project scaffold | `Cargo.toml`, `src/main.rs` | Dependencies, project structure |
 | Entity definitions | `src/state/mod.rs` | All entity structs and enums |
 | State machine | `src/state/machine.rs` | State transitions with validation |
 | SQLite store | `src/state/store.rs` | Database operations |
-| YAML schema | `src/workflow/schema.rs` | Workflow YAML structs |
+| YAML schema | `src/workflow/schema.rs` | Transpiler-format workflow YAML structs |
 | YAML parser | `src/workflow/parser.rs` | Parsing + validation |
 | Error types | `src/error.rs` | Thiserror-based errors |
 | Logging setup | `src/main.rs` | Tracing initialization |
+
+## Task 1.0: Project Scaffold (1h) **[Gap Fix]**
+
+### Files: `Cargo.toml`, `src/main.rs`, `src/lib.rs`
+
+```toml
+# Cargo.toml
+[package]
+name = "agent-queue"
+version = "0.1.0"
+edition = "2021"
+description = "Queue orchestration for yaml-to-rust-agentsdk"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
+```
+
+### Acceptance Criteria
+- [ ] `cargo build` succeeds
+- [ ] `cargo test` runs (even with no tests)
+- [ ] `cargo clippy` passes with no warnings
+- [ ] `cargo fmt --check` passes
+
+---
 
 ## Task 1.1: Define Entity Types (4h)
 
@@ -116,14 +153,13 @@ impl RunState {
     }
 }
 
-// Step state enum
+// Step state enum (metadata-only — populated from transpiler result, per IN-11)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepState {
-    Pending,
-    Running,
     Completed,
     Failed,
+    Skipped,
 }
 
 // Workflow entity
@@ -199,7 +235,7 @@ impl Run {
     }
 }
 
-// Step entity
+// Step entity (metadata-only summary from transpiler result, per IN-11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub id: String,
@@ -207,19 +243,14 @@ pub struct Step {
     pub step_id: String,
     pub step_index: u32,
     pub state: StepState,
-    pub input_text: Option<String>,
-    pub output_text: Option<String>,
+    pub output_summary: Option<String>,  // Truncated output (first 1KB)
     pub token_usage_json: Option<String>,
     pub error_message: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
     pub duration_ms: Option<u64>,
-    pub attempts: u32,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
-// Artifact entity
+// Artifact entity (metadata-only, per IN-12)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
     pub id: String,
@@ -227,6 +258,7 @@ pub struct Artifact {
     pub step_id: Option<String>,
     pub path: String,
     pub size_bytes: u64,
+    pub content_type: String,
     pub retention_days: u32,
     pub created_at: DateTime<Utc>,
 }
@@ -635,84 +667,56 @@ impl Transaction {
 
 ---
 
-## Task 1.4: YAML Schema (4h)
+## Task 1.4: YAML Schema (4h) **[IN-08]**
 
 ### File: `src/workflow/schema.rs`
 
+> **Design Decision (Gap 1 — resolved)**: Queue-level metadata (category, priority,
+> schedule, idempotency key, max_attempts) is specified via **CLI flags** when enqueueing.
+> The YAML file contains only what the transpiler expects — the workflow definition
+> (models, steps, tools, prompts). This means agent-queue's YAML parsing is minimal:
+> it reads the file to store `yaml_content` and `schema_version`, but does NOT parse
+> execution details. The transpiler handles all workflow YAML validation.
+
 ```rust
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
+/// Agent-queue's view of a workflow YAML — minimal, for storage only.
+/// The transpiler parses the full execution schema independently.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowSchema {
+pub struct WorkflowYaml {
+    /// Schema version (e.g., "1.0")
     pub schema_version: String,
+
+    /// Workflow name (used for display)
     pub name: String,
-    pub description: Option<String>,
-    pub version: Option<String>,
-    pub queue: QueueConfig,
-    pub retry: Option<RetryConfig>,
-    pub model: ModelConfig,
-    pub tools: ToolsConfig,
-    pub env: Option<Vec<String>>,
-    pub steps: Vec<StepSchema>,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueConfig {
-    pub category: String,
-    pub priority: Option<String>,
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Environment variables the workflow needs (names only, not values)
+    #[serde(default)]
+    pub env: Vec<String>,
+
+    /// Remaining fields are opaque — stored as raw YAML for the transpiler
     #[serde(flatten)]
-    pub schedule: Option<ScheduleConfig>,
+    pub extra: serde_yaml::Value,
 }
 
+/// Queue metadata — NOT in the YAML, provided via CLI flags
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScheduleConfig {
-    pub cron: Option<String>,
-    pub timezone: Option<String>,
-    pub catchup: Option<String>,
-    pub due_ts: Option<String>,
+pub struct QueueMetadata {
+    pub category: QueueCategory,
+    pub priority: Priority,
+    pub due_ts: Option<DateTime<Utc>>,
+    pub schedule_cron: Option<String>,
+    pub schedule_timezone: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub max_attempts: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryConfig {
-    pub max_attempts: Option<u32>,
-    pub base_delay_ms: Option<u64>,
-    pub max_delay_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelConfig {
-    pub provider: String,
-    pub model_path: String,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-    pub context_budget: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolsConfig {
-    pub allowed: Vec<String>,
-    pub blocked: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepSchema {
-    pub id: String,
-    pub description: Option<String>,
-    pub prompt: PromptSchema,
-    pub model: Option<ModelConfig>,
-    pub tools: Option<Vec<String>>,
-    pub timeout_s: Option<u64>,
-    pub retry: Option<RetryConfig>,
-    pub on_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptSchema {
-    pub system: Option<String>,
-    pub user: String,
-    pub assistant: Option<String>,
-}
+use chrono::{DateTime, Utc};
+use crate::state::{QueueCategory, Priority};
 ```
 
 ### Acceptance Criteria
@@ -723,12 +727,16 @@ pub struct PromptSchema {
 
 ---
 
-## Task 1.5: YAML Parser + Validation (6h)
+## Task 1.5: YAML Parser + Validation (6h) **[IN-08]**
 
 ### File: `src/workflow/parser.rs`
 
+> **Note**: Agent-queue's parser is intentionally lightweight — it reads the YAML for
+> storage (name, schema_version, env var names) but does NOT validate execution details.
+> The transpiler handles full workflow YAML validation via its `validate` subcommand.
+
 ```rust
-use crate::workflow::schema::{WorkflowSchema, StepSchema};
+use crate::workflow::schema::WorkflowYaml;
 use crate::error::Error;
 use serde_yaml;
 use std::fs;
@@ -740,87 +748,39 @@ pub enum ValidationError {
     #[error("missing required field: {0}")]
     MissingField(String),
 
-    #[error("invalid value for {field}: {message}")]
-    InvalidValue { field: String, message: String },
+    #[error("file not found: {0}")]
+    FileNotFound(String),
+
+    #[error("invalid YAML: {0}")]
+    InvalidYaml(String),
 
     #[error("schema version not supported: {0}")]
     UnsupportedSchemaVersion(String),
-
-    #[error("step id not unique: {0}")]
-    DuplicateStepId(String),
-
-    #[error("step reference not found: {0}")]
-    StepNotFound(String),
 }
 
 pub struct WorkflowParser;
 
 impl WorkflowParser {
-    pub fn parse<P: AsRef<Path>>(path: P) -> Result<WorkflowSchema, Error> {
+    pub fn parse<P: AsRef<Path>>(path: P) -> Result<WorkflowYaml, Error> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(Error::Validation(ValidationError::FileNotFound(
+                path.display().to_string(),
+            )));
+        }
+
         let yaml_content = fs::read_to_string(path)?;
-        let schema: WorkflowSchema = serde_yaml::from_str(&yaml_content)?;
+        let workflow: WorkflowYaml = serde_yaml::from_str(&yaml_content)
+            .map_err(|e| ValidationError::InvalidYaml(e.to_string()))?;
 
-        // Validate
-        Self::validate(&schema)?;
-
-        Ok(schema)
+        Self::validate(&workflow)?;
+        Ok(workflow)
     }
 
-    fn validate(schema: &WorkflowSchema) -> Result<(), ValidationError> {
-        // Validate schema version
-        if schema.schema_version != "0.1.0" {
-            return Err(ValidationError::UnsupportedSchemaVersion(schema.schema_version.clone()));
-        }
-
-        // Validate required fields
-        if schema.name.is_empty() {
+    fn validate(workflow: &WorkflowYaml) -> Result<(), ValidationError> {
+        if workflow.name.is_empty() {
             return Err(ValidationError::MissingField("name".to_string()));
         }
-
-        if schema.steps.is_empty() {
-            return Err(ValidationError::MissingField("steps".to_string()));
-        }
-
-        // Validate queue category
-        let valid_categories = vec!["asap", "whenever", "scheduled", "cron"];
-        if !valid_categories.contains(&schema.queue.category.as_str()) {
-            return Err(ValidationError::InvalidValue {
-                field: "queue.category".to_string(),
-                message: format!("must be one of: {}", valid_categories.join(", ")),
-            });
-        }
-
-        // Validate step IDs are unique
-        let mut step_ids = std::collections::HashSet::new();
-        for step in &schema.steps {
-            if !step_ids.insert(&step.id) {
-                return Err(ValidationError::DuplicateStepId(step.id.clone()));
-            }
-        }
-
-        // Validate tool permissions
-        let allowed_tools: std::collections::HashSet<_> = schema.tools.allowed.iter().collect();
-        let blocked_tools: std::collections::HashSet<_> = schema.tools.blocked.iter().collect();
-
-        for step in &schema.steps {
-            if let Some(tools) = &step.tools {
-                for tool in tools {
-                    if blocked_tools.contains(tool) {
-                        return Err(ValidationError::InvalidValue {
-                            field: format!("step.{}.tools", step.id),
-                            message: format!("tool '{}' is blocked", tool),
-                        });
-                    }
-                    if !allowed_tools.contains(tool) && !blocked_tools.is_empty() {
-                        return Err(ValidationError::InvalidValue {
-                            field: format!("step.{}.tools", step.id),
-                            message: format!("tool '{}' is not allowed", tool),
-                        });
-                    }
-                }
-            }
-        }
-
         Ok(())
     }
 }
@@ -828,10 +788,14 @@ impl WorkflowParser {
 
 ### Acceptance Criteria
 
-- [ ] Valid YAML parses successfully
-- [ ] Invalid YAML returns clear error
-- [ ] All validations are enforced
-- [ ] Error messages are actionable
+- [ ] Valid YAML file parses and returns WorkflowYaml
+- [ ] Missing file returns FileNotFound error
+- [ ] Malformed YAML returns InvalidYaml error
+- [ ] Workflow content stored in database for transpiler consumption
+
+    #[error("step reference not found: {0}")]
+    StepNotFound(String),
+}
 
 ---
 
@@ -1018,6 +982,6 @@ async fn test_insert_and_get_workflow() {
 - [ ] Integration tests pass
 - [ ] Documentation complete
 
-**Phase 1 Estimated Time**: 32 hours
+**Phase 1 Estimated Time**: 33 hours (32h original + 1h project scaffold)
 
 **Phase 1 Deliverable**: Working foundation that can enqueue workflows to queue

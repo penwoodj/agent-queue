@@ -574,13 +574,13 @@ agent-queue inspect $RUN_ID --steps
 - **All 10 must-have criteria pass**
 - **At least 13 of 15 should-have criteria pass** (87%)
 - **Test coverage > 80%**
-- **All 55 MVP requirements verified**
+- **All 48 MVP requirements verified**
 
 ### Sign-Off Checklist
 
-- [ ] Unit tests: 55/55 pass
-- [ ] Integration tests: 55/55 pass
-- [ ] E2E tests: 55/55 pass
+- [ ] Unit tests: 48/48 pass
+- [ ] Integration tests: 48/48 pass
+- [ ] E2E tests: 48/48 pass
 - [ ] Must-have criteria: 10/10 pass
 - [ ] Should-have criteria: XX/15 pass
 - [ ] Code coverage: XX% (> 80% target)

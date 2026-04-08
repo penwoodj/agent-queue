@@ -373,7 +373,9 @@ pub enum Commands {
 | CLI arg parsing | 5 | All subcommands, defaults, validation |
 | Error formatting | 3 | Display, JSON, log formats |
 | Cron parsing | 4 | Valid expressions, timezone, edge cases |
-| **Total** | **12** | |
+| Idempotency enforcement | 2 | Duplicate key rejection, race condition |
+| Audit log entries | 4 | All state changes logged correctly |
+| **Total** | **18** | |
 
 ### Integration Tests
 
@@ -382,11 +384,22 @@ pub enum Commands {
 | Enqueue → execute → done | Full flow | Run reaches DONE, artifacts stored |
 | Enqueue → fail → retry | Error flow | Run retries, eventually DLQ |
 | Cancel queued run | Cancellation | Run transitions to CANCELED |
+| Cancel running run | Force cancel | Run transitions to CANCELED |
 | Schedule cron job | Cron | Run created at scheduled time |
 | Validate invalid YAML | Validation | Errors displayed, non-zero exit |
+| Validate valid YAML | Validation | Success message, zero exit |
 | Drain queue | Drain | All runs canceled |
 | Daemon startup/shutdown | Daemon | Graceful startup and shutdown |
-| **Total** | **7** | |
+| Idempotency key | Dedup | Second enqueue returns same run |
+| Retry from DLQ | Recovery | Run requeued with reset attempts |
+| List with filters | Query | Filtered results match criteria |
+| Inspect with steps | Detail | Step summaries from transpiler result |
+| Env var resolution | Configuration | Missing vars cause clear error |
+| Backpressure | Admission | Queue rejects when full |
+| Concurrent enqueue | Race | Exactly one enqueue succeeds |
+| Error classification | Error mapping | Transpiler errors mapped correctly |
+| Artifact collection | Artifacts | Metadata stored after execution |
+| **Total** | **18** | |
 
 ---
 

@@ -2,99 +2,91 @@
 
 ## Overview
 
-This plan suite implements the Agent Queue System MVP with a **transpiler integration** that uses delegates workflow execution to transpiler. This approach allows thorough verification of all queue engine requirements without needing the actual workflow execution engine.
+This plan suite implements the Agent Queue System MVP with **transpiler integration** that delegates workflow execution to `yaml-to-rust-agentsdk`. Agent-queue is a queue orchestrator — it handles scheduling, state management, retry, DLQ, and audit. The transpiler handles all workflow execution (LLM calls, tools, steps).
 
 ## Assumptions
 
-1. **Workflow Engine is Complete**: We assume the transpiler/ folder workflow engine is fully functional and can execute workflows
-2. **Stubbed Execution**: The agent executor will be stubbed with sleep-based mocks that simulate:
-   - LLM generation latency (5-30s per step)
-   - Tool execution time (1-5s per tool)
-   - Failures and retries (10% failure rate)
-   - Context window exhaustion (rare, simulated)
-3. **Extensive Logging**: Every state transition, tool call, and mock operation will be logged with correlation IDs
-4. **Verification-First**: Tests will validate all MVP requirements with structured assertions
+1. **Transpiler is Complete**: The workflow execution engine in `yaml-to-rust-agentsdk` is fully functional and can execute workflows independently
+2. **Transpiler Delegation**: Agent-queue invokes the transpiler as an external CLI subprocess and processes its JSON output — it does NOT reimplement any execution logic
+3. **Metadata-Only Tracking**: Agent-queue tracks orchestration metadata (run state, lease, retry count, artifact paths). Step-level execution details belong to the transpiler (per IN-11)
+4. **Queue-Level Retry Only**: Per IN-09, transpiler internal retry is disabled. Agent-queue owns all retry decisions
+5. **Extensive Logging**: Every state transition and queue operation will be logged with correlation IDs, compatible with transpiler's 9-level hierarchy (per IN-14)
+6. **Verification-First**: Tests will validate all 48 MVP requirements with structured assertions
 
 ## Plan Structure
 
 ```
 plans/mvp-implementation/
 ├── 00-overview.md              # This file
-├── 01-architecture.md          # Architecture design with stubbed components
-├── 02-data-model.md            # Complete data model with SQLite schema
+├── 01-architecture.md          # Architecture with transpiler integration
+├── 02-data-model.md            # Data model (metadata-only steps/artifacts)
 ├── 03-state-machine.md         # State machine implementation
 ├── phases/
-│   ├── 01-foundation.md        # Phase 1: Entities, state, persistence
-│   ├── 02-queue-engine.md     # Phase 2: Scheduling, leases, retries
-│   ├── 03-transpiler-integration.md   # Phase 3: Transpler Integration
-│   ├── 04-cli-integration.md  # Phase 4: CLI + integration
-│   └── 05-testing-polish.md   # Phase 5: Testing + verification
-├── tests/
-│   ├── unit/                  # Unit test specifications
-│   ├── integration/           # Integration test specifications
-│   ├── e2e/                  # End-to-end test specifications
-│   └── verification/          # Verification criteria per requirement
-├── mocks/
-│   ├── executor.rs            # Stubbed execution engine
-│   ├── llm_provider.rs        # Mock LLM with sleep simulation
-│   └── tools.rs              # Mock tools with latency
+│   ├── 01-foundation.md        # Phase 1: Entities, state, persistence (32h)
+│   ├── 02-queue-engine.md     # Phase 2: Scheduling, leases, retries (36h)
+│   ├── 03-transpiler-integration.md   # Phase 3: Transpiler integration (27h)
+│   ├── 04-cli-integration.md  # Phase 4: CLI + integration (46h)
+│   └── 05-testing-polish.md   # Phase 5: Testing + verification (36h)
 └── verification/
-    ├── requirements-traceability.md  # Requirement to test mapping
-    ├── success-criteria.md          # MVP success criteria checklist
-    └── test-coverage.md            # Test coverage matrix
+    ├── requirements-traceability.md  # 48 requirements → tests mapping
+    └── success-criteria.md          # 15 success criteria checklist
 ```
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Week 1)
-- Define all entity types
-- Implement state machine
-- Create SQLite persistence layer
-- YAML validation and parsing
+### Phase 1: Foundation (Week 1 — 32h)
+- Project scaffold (Cargo.toml, dependencies)
+- Define all entity types (Run, Workflow, Step, Artifact, AuditLog)
+- Implement 10-state run lifecycle state machine
+- Create SQLite persistence layer with WAL mode
+- YAML workflow parsing (transpiler-format, per IN-08)
 - Error handling and logging setup
 
-### Phase 2: Queue Engine (Week 2)
-- Queue categories and priority
-- Scheduler with meta-scheduling
-- Lease management and heartbeat
-- Retry logic with backoff
-- DLQ and error handling
+### Phase 2: Queue Engine (Week 2 — 36h)
+- Queue categories (ASAP, Whenever, Scheduled, Cron)
+- Scheduler with meta-scheduling (EDF, WRR, priority-based)
+- Lease management and heartbeat keep-alive
+- Retry logic with exponential backoff + jitter
+- DLQ routing and triage
 - Backpressure and admission control
+- Audit logging (append-only)
 
-### Phase 3: Agent SDK Mock (Week 3)
-- Stubbed execution engine
-- Mock LLM provider with sleep simulation
-- Mock tools with latency
-- Step runner with context management
-- Artifact collection
+### Phase 3: Transpiler Integration (Week 3 — 27h)
+- Transpiler CLI invocation interface
+- Heartbeat management during long executions
+- Result parsing and error classification (per IN-13)
+- Artifact metadata collection (per IN-12)
+- Environment variable resolution and passthrough
+- Validation mode integration (per IN-15)
+- Mock transpiler binary for testing
 
-### Phase 4: CLI + Integration (Week 4-5)
-- CLI commands (enqueue, list, inspect, cancel, retry, schedule, drain)
-- Queue to agent integration
-- State transition reporting
-- Error propagation
+### Phase 4: CLI + Integration (Week 4-5 — 46h)
+- CLI commands (enqueue, list, inspect, cancel, retry, schedule, drain, validate, cleanup, daemon)
+- Queue-to-transpiler wiring
+- Error propagation (transpiler → queue → user)
+- Cron scheduling with timezone support
+- Daemon mode with graceful shutdown
 
-### Phase 5: Testing + Verification (Week 5-6)
-- Unit tests for all components
-- Integration tests for workflows
-- End-to-end tests with real workflows
-- Verification of all MVP requirements
-- Performance and load testing
+### Phase 5: Testing + Verification (Week 5-6 — 36h)
+- 156 tests (48 unit + 48 integration + 48 E2E + 12 error scenarios)
+- Manual verification against 15 success criteria
+- Performance tuning and benchmarking
+- Documentation and code polish
 
 ## Verification Strategy
 
 Each MVP requirement will be verified through:
 
-1. **Unit Tests**: Test individual components in isolation
-2. **Integration Tests**: Test component interactions
-3. **End-to-End Tests**: Test complete workflows
-4. **Property-Based Tests**: Test invariants with random inputs
-5. **Manual Verification**: CLI command execution and observation
+1. **Unit Tests** (48): Test individual components in isolation
+2. **Integration Tests** (48): Test component interactions with mock transpiler
+3. **End-to-End Tests** (48): Test complete user journeys via CLI
+4. **Error Scenario Tests** (12): Test failure modes and edge cases
+5. **Manual Verification**: CLI command execution against success criteria
 
 ## Success Criteria
 
 The MVP is complete when:
-- All 55 MVP requirements are implemented
+- All 48 MVP requirements are implemented and verified
 - All 10 must-have success criteria pass
 - Test coverage > 80%
 - All end-to-end workflows execute successfully
@@ -103,4 +95,4 @@ The MVP is complete when:
 
 ## Next Steps
 
-Start with Phase 1: Foundation
+Start with Phase 1: Foundation — read `phases/01-foundation.md`.

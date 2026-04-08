@@ -172,7 +172,7 @@ Run all unit tests:
 cargo test --lib
 ```
 
-Expected: All 55 unit tests pass
+Expected: All 48 unit tests pass
 
 ### Phase 2: Integration Tests (Week 5, Days 3-4)
 
@@ -181,7 +181,7 @@ Run all integration tests:
 cargo test --test '*'
 ```
 
-Expected: All 55 integration tests pass
+Expected: All 48 integration tests pass
 
 ### Phase 3: End-to-End Tests (Week 5, Days 5)
 
@@ -190,7 +190,7 @@ Run all E2E tests with real CLI:
 cargo test --test e2e -- --test-threads=1
 ```
 
-Expected: All 55 E2E tests pass
+Expected: All 48 E2E tests pass
 
 ### Phase 4: Manual Verification (Week 6)
 
@@ -216,14 +216,15 @@ Target: > 80% coverage
 
 ### Requirement Coverage
 
-Current: 55/55 = 100%
+Current: 48/48 = 100%
 
 ### Test Coverage
 
-- Unit tests: 55
-- Integration tests: 55
-- E2E tests: 55
-- Total: 165 tests
+- Unit tests: 48
+- Integration tests: 48
+- E2E tests: 48
+- Error scenario tests: 12
+- Total: 156 tests
 
 ## Verification Report Template
 
@@ -235,19 +236,19 @@ Current: 55/55 = 100%
 ## Test Results
 
 ### Unit Tests
-- Total: 55
+- Total: 48
 - Passed: XX
 - Failed: XX
 - Coverage: XX%
 
 ### Integration Tests
-- Total: 55
+- Total: 48
 - Passed: XX
 - Failed: XX
 - Coverage: XX%
 
 ### E2E Tests
-- Total: 55
+- Total: 48
 - Passed: XX
 - Failed: XX
 - Coverage: XX%
@@ -275,7 +276,7 @@ Current: 55/55 = 100%
 
 ## Requirements Coverage
 
-- Total MVP Requirements: 55
+- Total MVP Requirements: 48
 - Verified: XX
 - Failed: XX
 - Coverage: XX%

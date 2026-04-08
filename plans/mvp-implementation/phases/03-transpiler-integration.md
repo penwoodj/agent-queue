@@ -741,7 +741,10 @@ impl QueueEngine {
 | Env Var Resolution | 2 | Resolution, missing vars |
 | Result Parsing | 4 | JSON parsing, error classification |
 | Heartbeat Timing | 2 | Interval, cancellation |
-| **Total** | **11** | |
+| Artifact Metadata | 2 | Collection, content type inference |
+| CLI Contract Matching | 2 | Output format validation |
+| Error Classification Protocol | 2 | Retryable vs non-retryable mapping |
+| **Total** | **17** | |
 
 ### Integration Tests
 
@@ -762,7 +765,7 @@ impl QueueEngine {
 **Phase complete when:**
 
 - [ ] All 7 tasks complete and code reviewed
-- [ ] Unit tests passing (11/11)
+- [ ] Unit tests passing (17/17)
 - [ ] Integration tests passing (7/7)
 - [ ] Transpler integration can execute simple workflow
 - [ ] Validation mode works correctly

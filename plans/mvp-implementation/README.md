@@ -13,7 +13,7 @@ This plan suite implements the **Agent Queue System MVP** with **transpiler inte
 ✅ **State Machine** - All state transitions with validation
 ✅ **5 Implementation Phases** - Detailed task breakdown with effort estimates
 ✅ **Transpiler Integration** - CLI/API interface to yaml-to-rust-agentsdk
-✅ **Comprehensive Testing Strategy** - 192 tests across 3 test types (48 queue requirements)
+✅ **Comprehensive Testing Strategy** - 156 tests across 3 test types + error scenarios (48 queue requirements)
 ✅ **Verification Matrix** - All 48 MVP requirements mapped to tests
 ✅ **Success Criteria** - 10 must-have + 5 should-have criteria
 
@@ -114,9 +114,9 @@ Tasks:
 **Deliverable**: Verified, tested, documented system
 
 Tasks:
-1. Unit tests (4h) - 55 tests
-2. Integration tests (6h) - 55 tests
-3. E2E tests (4h) - 55 tests
+1. Unit tests (4h) - 48 tests
+2. Integration tests (6h) - 48 tests
+3. E2E tests (4h) - 48 tests
 4. Error scenario tests (4h)
 5. Manual verification (4h)
 6. Documentation (4h)
@@ -150,7 +150,7 @@ Tasks:
 
 **Components in one Tokio runtime**:
 - Queue engine
-- Agent executor (stubbed)
+- Transpiler integration (subprocess invocation)
 - SQLite store
 - CLI commands
 
@@ -428,7 +428,7 @@ Each phase includes:
 This plan suite provides:
 
 ✅ **Complete architecture** with transpiler integration
-✅ **5 implementation phases** with detailed tasks (177 hours)
+✅ **5 implementation phases** with detailed tasks (178 hours)
 ✅ **156 tests** across 3 test types + error scenarios (100% requirement coverage for 48 queue requirements)
 ✅ **15 success criteria** for verification
 ✅ **8 integration requirements** (IN-08 through IN-15) for robust transpiler coupling

@@ -217,6 +217,46 @@ impl TranspilerLibraryConfig {
 }
 ```
 
+### CLI Contract Summary (Quick Reference)
+
+This is the canonical interface agent-queue expects from the transpiler binary:
+
+| Subcommand | Args | stdout | stderr | Exit Code |
+|-----------|------|--------|--------|-----------|
+| `execute` | `--workflow <path> --format json` | `TranspilerResult` JSON | `TranspilerErrorDetail` JSON | 0=success, 1=failure |
+| `validate` | `--workflow <path> --format json` | `ValidationResult` JSON | `ValidationErrorDetail` JSON | 0=valid, 1=invalid |
+
+**`execute` stdout** (`TranspilerResult`):
+```json
+{
+  "run_id": "string",
+  "status": "completed | failed | timeout",
+  "duration_ms": 12345,
+  "steps": [{ "step_id": "string", "status": "completed|failed|skipped", "duration_ms": 0, "token_usage": {}, "output": "string" }],
+  "artifacts": [{ "step_id": "string|null", "path": "string", "size_bytes": 0 }],
+  "error": null | { "error_type": "string", "message": "string", "step_id": "string|null", "retryable": true|false, "details": {} }
+}
+```
+
+**`execute` stderr** (`TranspilerErrorDetail`):
+```json
+{ "error_type": "string", "message": "string", "step_id": "string|null", "retryable": true|false, "details": {} }
+```
+
+**`validate` stdout** (`ValidationResult`):
+```json
+{ "valid": true, "errors": [] }
+```
+
+**`validate` stderr** (`ValidationErrorDetail`):
+```json
+{ "valid": false, "errors": [{ "path": "string", "message": "string", "severity": "error|warning" }] }
+```
+
+> **Implementation Note**: Before Phase 3, verify the actual `yaml-to-rust-agentsdk` binary
+> matches this contract. If it differs, add an adapter layer in `src/transpiler/adapter.rs`.
+> The mock transpiler (`plans/mvp-implementation/mocks/MOCK_TRANSPILER.md`) implements this exact contract.
+
 ---
 
 ## Data Flow Protocol
